@@ -108,31 +108,43 @@ bool Read(std::vector<Row>& rows) {
     return !rows.empty();
 }
 bool Apply(const std::vector<Row>& rows) {
-    auto widgets = Widgets();
-    if (widgets.empty()) return false;
     bool ok = true;
-    for (const Row& row : rows) {
-        const auto it = widgets.find(row.path);
-        if (it == widgets.end()) { ok = false; continue; }
-        void* widget = it->second;
-        Row current;
-        if (!ReadRow(widget, current)) { ok = false; continue; }
-        if (row.visibility != current.visibility)
-            ok = Set(widget, L"SetVisibility", L"InVisibility", row.visibility) && ok;
-        if ((row.flags & current.flags & 1) && row.tab != current.tab) {
-            int32_t count = 0;
-            if (Get(widget, L"GetChildrenCount", count) && row.tab >= 0 && row.tab < count)
-                ok = Set(widget, L"SetActiveWidgetIndex", L"Index", row.tab) && ok;
-            else ok = false;
+    // A tab switch reveals rows the first walk could not see (only the active
+    // page is walked), so a switch earns one more walk in the same call.
+    for (int pass = 0; pass < 2; ++pass) {
+        auto widgets = Widgets();
+        if (widgets.empty()) return false;
+        ok = true;
+        bool switched = false;
+        for (const Row& row : rows) {
+            // A row the local page lacks is not a failure: list pages (mail,
+            // store, the scrolling hash viewer) differ in length between peers,
+            // and failing the whole Apply on them kept the operator's repaint
+            // latch set forever, snapping the laptop back to the old tab.
+            const auto it = widgets.find(row.path);
+            if (it == widgets.end()) continue;
+            void* widget = it->second;
+            Row current;
+            if (!ReadRow(widget, current)) { ok = false; continue; }
+            if (row.visibility != current.visibility)
+                ok = Set(widget, L"SetVisibility", L"InVisibility", row.visibility) && ok;
+            if ((row.flags & current.flags & 1) && row.tab != current.tab) {
+                int32_t count = 0;
+                if (Get(widget, L"GetChildrenCount", count) && row.tab >= 0 && row.tab < count) {
+                    const bool set = Set(widget, L"SetActiveWidgetIndex", L"Index", row.tab);
+                    ok = set && ok; switched = switched || set;
+                } else ok = false;
+            }
+            if ((row.flags & current.flags & 2) && std::fabs(row.scroll - current.scroll) > 0.5f)
+                ok = Set(widget, L"SetScrollOffset", L"NewScrollOffset", row.scroll) && ok;
+            if ((row.flags & current.flags & 4) && row.text != current.text) {
+                uint8_t text[ftext_utils::kFTextSize]{};
+                ParamFrame frame(Fn(widget, L"SetText"));
+                ok = (ftext_utils::MintFText(row.text.c_str(), text) &&
+                    frame.SetRaw(L"InText", text, sizeof(text)) && Call(widget, frame)) && ok;
+            }
         }
-        if ((row.flags & current.flags & 2) && std::fabs(row.scroll - current.scroll) > 0.5f)
-            ok = Set(widget, L"SetScrollOffset", L"NewScrollOffset", row.scroll) && ok;
-        if ((row.flags & current.flags & 4) && row.text != current.text) {
-            uint8_t text[ftext_utils::kFTextSize]{};
-            ParamFrame frame(Fn(widget, L"SetText"));
-            ok = (ftext_utils::MintFText(row.text.c_str(), text) &&
-                frame.SetRaw(L"InText", text, sizeof(text)) && Call(widget, frame)) && ok;
-        }
+        if (!switched) break;
     }
     return ok;
 }

@@ -6,6 +6,7 @@
 #include "coop/net/session_serial.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/engine/world_identity.h"
 #include <array>
 #include <chrono>
@@ -27,6 +28,8 @@ uint64_t g_epoch = 0, g_claimRevision = 0;
 uint8_t g_holder = 0xff;
 std::chrono::steady_clock::time_point g_next{};
 bool g_apply = false, g_busy = false;
+constexpr int kOperatorRepaints = 3;
+int g_operatorFails = 0;
 bool Active() { return g_session && g_session->running() && g_session->connected(); }
 bool Host() { return Active() && g_session->role() == net::Role::Host; }
 uint32_t Next(uint32_t& value) { if (!++value) ++value; return value; }
@@ -39,7 +42,7 @@ void Clear() {
     }
     g_assembler.Clear(); g_canonical.clear(); g_sent.clear(); g_target.clear();
     g_owed.fill(false); g_seen.fill(0); g_peerEpoch.fill(0);
-    g_holder = 0xff; g_apply = false; g_next = {}; g_claimRevision = 0;
+    g_holder = 0xff; g_apply = false; g_operatorFails = 0; g_next = {}; g_claimRevision = 0;
     // Keep lease/revision/blob counters monotonic through travel so old-world
     // packets cannot acquire the next world's lease by reusing its number.
     ++g_epoch; g_world = ue_wrap::world_identity::Generation();
@@ -119,7 +122,16 @@ void Tick() {
         const bool applied = UI::Apply(target);
         if (!Current(epoch) || revision != g_revision) return;
         if (applied) g_apply = false;
+        else if (g_apply && Author() && ++g_operatorFails >= kOperatorRepaints) {
+            // The operator inherits the preceding screen once, best effort. A
+            // screen that never converges must not take the laptop from the
+            // player who sits at it: their own clicks author from here on.
+            UE_LOGW("shared_screen_sync: the inherited screen did not apply after %d tries -- the operator's own screen wins",
+                g_operatorFails);
+            g_apply = false;
+        }
     }
+    if (!g_apply) g_operatorFails = 0;
     if ((!g_apply && Author()) || (Host() && g_canonical.empty())) {
         Capture();
         if (!Current(epoch)) return;

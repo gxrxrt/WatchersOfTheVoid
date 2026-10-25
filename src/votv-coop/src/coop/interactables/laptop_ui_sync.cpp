@@ -5,6 +5,7 @@
 #include "coop/net/session.h"
 #include "coop/player/players_registry.h"
 #include "ue_wrap/core/game_thread.h"
+#include "ue_wrap/core/log.h"
 #include "ue_wrap/devices/laptop_ui.h"
 #include "ue_wrap/engine/world_identity.h"
 #include <array>
@@ -18,6 +19,8 @@ net::Session* g_session = nullptr;
 blob_chunks::Assembler g_assembler;
 UI::State g_state, g_sent;
 bool g_have = false, g_apply = false, g_haveSent = false, g_busy = false;
+constexpr int kOperatorRepaints = 3;
+int g_operatorFails = 0;
 uint8_t g_owner = 0xff;
 uint32_t g_lease = 0, g_revision = 0, g_command = 0, g_blob = 0, g_world = 0;
 uint64_t g_epoch = 0, g_poll = 0;
@@ -35,7 +38,7 @@ bool Active() { return g_session && g_session->running() && g_session->connected
 bool Host() { return Active() && g_session->role() == net::Role::Host; }
 void Clear() {
     g_assembler.Clear(); g_state = {}; g_sent = {};
-    g_have = g_apply = g_haveSent = false; g_owner = 0xff;
+    g_have = g_apply = g_haveSent = false; g_operatorFails = 0; g_owner = 0xff;
     g_lease = g_revision = g_command = g_blob = 0; g_seen.fill(0); g_dirty.fill(false);
     g_poll = 0; g_claimRevision = 0; ++g_epoch; g_world = ue_wrap::world_identity::Generation();
 }
@@ -124,7 +127,16 @@ void Tick() {
         if (epoch != g_epoch || !Active()) return;
         if (revision != g_revision) return;
         if (applied) g_apply = false;
+        else if (g_lease && g_owner == players::Registry::Get().LocalPeerId() &&
+                 device_occupancy::LocalHolds(L"laptop") && ++g_operatorFails >= kOperatorRepaints) {
+            // Same rule as the shared screen: the operator inherits the page
+            // and cart once, best effort, and is never pinned to them.
+            UE_LOGW("laptop_ui_sync: the inherited page/cart did not apply after %d tries -- the operator's own state wins",
+                g_operatorFails);
+            g_apply = false;
+        }
     }
+    if (!g_apply) g_operatorFails = 0;
     const auto local = players::Registry::Get().LocalPeerId();
     const auto readingLease = g_lease;
     const bool author = !g_apply && g_lease && g_owner == local && device_occupancy::LocalHolds(L"laptop");
