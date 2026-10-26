@@ -334,6 +334,9 @@ msgstr "[[Click to mute your mic]]"
 msgid "Code %s -- include it in a bug report"
 msgstr "[[Code %s -- include it in a bug report]]"
 
+msgid "Collectibles"
+msgstr "[[Collectibles]]"
+
 msgid ""
 "Colors your nick everywhere it shows -- nameplate, chat, player list --\n"
 "on every peer's screen. Synced live and to late joiners; persists."
@@ -343,6 +346,13 @@ msgstr ""
 
 msgid "Confirm ban"
 msgstr "[[Confirm ban]]"
+
+msgid "Connect"
+msgstr "[[Connect]]"
+
+#, c-format
+msgid "Connected as %1$s, %2$d connection(s), worst ping %3$d ms"
+msgstr "[[Connected as %1$s, %2$d connection(s), worst ping %3$d ms]]"
 
 #, c-format
 msgid "Connecting to %1$s's game..."
@@ -485,6 +495,9 @@ msgstr "[[Finding a route to %s]]"
 msgid "Frequency of the repeatable world spawners: Fossilhounds, killer wisps, sky wisps and night eggs, plus each owner's night eyes. 2x halves their native waiting intervals; eligibility and spawn chances stay native. Story dates, dreams and creature animation speed stay unchanged."
 msgstr "[[Frequency of the repeatable world spawners: Fossilhounds, killer wisps, sky wisps and night eggs, plus each owner's night eyes. 2x halves their native waiting intervals; eligibility and spawn chances stay native. Story dates, dreams and creature animation speed stay unchanged.]]"
 
+msgid "Friends on the same network or VPN (Tailscale, ZeroTier, Hamachi) join with Direct Connect. Click an address to copy it."
+msgstr "[[Friends on the same network or VPN (Tailscale, ZeroTier, Hamachi) join with Direct Connect. Click an address to copy it.]]"
+
 msgid "Gamemode:"
 msgstr "[[Gamemode:]]"
 
@@ -515,6 +528,12 @@ msgstr "[[Host game]]"
 
 msgid "ID"
 msgstr "[[ID]]"
+
+msgid "If something looks different from your host, ask the host to press Resync in this pane."
+msgstr "[[If something looks different from your host, ask the host to press Resync in this pane.]]"
+
+msgid "Invite"
+msgstr "[[Invite]]"
 
 #, c-format
 msgid "Joined %1$s's game"
@@ -663,6 +682,9 @@ msgstr "[[No banned players.]]"
 msgid "No microphone -- voice is receive-only."
 msgstr "[[No microphone -- voice is receive-only.]]"
 
+msgid "No network address found."
+msgstr "[[No network address found.]]"
+
 msgid "No output device -- you can't hear voice."
 msgstr "[[No output device -- you can't hear voice.]]"
 
@@ -680,6 +702,9 @@ msgstr "[[No tools here yet -- coming soon.]]"
 
 msgid "Nobody in the registry yet (players are recorded when they join)."
 msgstr "[[Nobody in the registry yet (players are recorded when they join).]]"
+
+msgid "Not in a session."
+msgstr "[[Not in a session.]]"
 
 msgid "Not ready yet, try again in a moment."
 msgstr "[[Not ready yet, try again in a moment.]]"
@@ -709,6 +734,9 @@ msgstr "[[Other]]"
 msgid "Output"
 msgstr "[[Output]]"
 
+msgid "Over the internet, friends find you in the server browser."
+msgstr "[[Over the internet, friends find you in the server browser.]]"
+
 msgid "Overlay fonts (per surface):"
 msgstr "[[Overlay fonts (per surface):]]"
 
@@ -717,6 +745,12 @@ msgstr "[[PLAYERS]]"
 
 msgid "Password  (leave empty if the server has none)"
 msgstr "[[Password  (leave empty if the server has none)]]"
+
+msgid "Paste"
+msgstr "[[Paste]]"
+
+msgid "Paste the address your host copied (host:port) and connect. The last address you joined is filled in."
+msgstr "[[Paste the address your host copied (host:port) and connect. The last address you joined is filled in.]]"
 
 msgid "Peer action notifications"
 msgstr "[[Peer action notifications]]"
@@ -768,6 +802,9 @@ msgstr "[[Please describe what happened (at least 20 characters).]]"
 msgid "Push-to-talk (key: %s)"
 msgstr "[[Push-to-talk (key: %s)]]"
 
+msgid "Quick connect"
+msgstr "[[Quick connect]]"
+
 msgid "RELAY"
 msgstr "[[RELAY]]"
 
@@ -803,6 +840,15 @@ msgstr "[[Repeatable event frequency]]"
 
 msgid "Rescan devices"
 msgstr "[[Rescan devices]]"
+
+msgid "Resync"
+msgstr "[[Resync]]"
+
+msgid "Resync all players"
+msgstr "[[Resync all players]]"
+
+msgid "Resync sent."
+msgstr "[[Resync sent.]]"
 
 #, c-format
 msgid ""
@@ -867,6 +913,9 @@ msgstr "[[Select a category on the left.]]"
 msgid "Select a server"
 msgstr "[[Select a server]]"
 
+msgid "Sends the whole world state to every joined player again: props, doors, power, the drone, the computer. Use it when something looks different for a friend."
+msgstr "[[Sends the whole world state to every joined player again: props, doors, power, the drone, the computer. Use it when something looks different for a friend.]]"
+
 msgid "Server address"
 msgstr "[[Server address]]"
 
@@ -924,6 +973,9 @@ msgstr "[[Someone else has that item.]]"
 
 msgid "Something was sent before the identity was proved."
 msgstr "[[Something was sent before the identity was proved.]]"
+
+msgid "Spawn a little Claude"
+msgstr "[[Spawn a little Claude]]"
 
 msgid ""
 "Speech louder than this transmits. Watch the mic\n"
@@ -1374,8 +1426,14 @@ msgstr "[[Your net.ice=relay keeps your address from other players, and a direct
 msgid "Your player id %s"
 msgstr "[[Your player id %s]]"
 
+msgid "a terracotta plush, saved with your world"
+msgstr "[[a terracotta plush, saved with your world]]"
+
 msgid "banned"
 msgstr "[[banned]]"
+
+msgid "client"
+msgstr "[[client]]"
 
 msgid "could not be read"
 msgstr "[[could not be read]]"
@@ -1386,6 +1444,9 @@ msgstr "[[current: %s]]"
 
 msgid "direct"
 msgstr "[[direct]]"
+
+msgid "host"
+msgstr "[[host]]"
 
 msgid "host or host:port"
 msgstr "[[host or host:port]]"

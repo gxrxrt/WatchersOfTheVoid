@@ -74,7 +74,7 @@ const char* KindOf(const std::string& ip) {
 }
 
 void RenderHost(const NS::Snapshot& s) {
-    ImGui::SeparatorText(l10n::T("Invite"));
+    ImGui::SeparatorText(l10n::Label(l10n::T("Invite"), "sp_invite"));
     if (g_addrs.empty() || Clock::now() - g_addrsAt > std::chrono::seconds(10)) {
         ReadAddresses();
         g_addrsAt = Clock::now();
@@ -100,13 +100,13 @@ void RenderHost(const NS::Snapshot& s) {
         ImGui::TextDisabled("%s", l10n::T("Over the internet, friends find you in the server browser."));
     }
 
-    ImGui::SeparatorText(l10n::T("Resync"));
+    ImGui::SeparatorText(l10n::Label(l10n::T("Resync"), "sp_resync"));
     ImGui::TextWrapped("%s", l10n::T("Sends the whole world state to every joined player again: props, doors, power, "
                                      "the drone, the computer. Use it when something looks different for a friend."));
     const auto left = kResyncCooldown - (Clock::now() - g_lastResync);
     const bool cooling = g_lastResync != Clock::time_point{} && left > Clock::duration::zero();
     if (cooling) ImGui::BeginDisabled();
-    if (ImGui::Button(l10n::T("Resync all players")) && s.connected) {
+    if (ImGui::Button(l10n::Label(l10n::T("Resync all players"), "sp_resync_all")) && s.connected) {
         g_lastResync = Clock::now();
         g_resyncNote = l10n::T("Resync sent.");
         GT::Post([] {
@@ -129,8 +129,8 @@ void RenderHost(const NS::Snapshot& s) {
     }
     if (!g_resyncNote.empty()) ImGui::TextDisabled("%s", g_resyncNote.c_str());
 
-    ImGui::SeparatorText(l10n::T("Collectibles"));
-    if (ImGui::Button(l10n::T("Spawn a little Claude")))
+    ImGui::SeparatorText(l10n::Label(l10n::T("Collectibles"), "sp_collect"));
+    if (ImGui::Button(l10n::Label(l10n::T("Spawn a little Claude"), "sp_claude")))
         GT::Post([] { coop::claude_figurine::SpawnNearLocalPlayer(); });
     ImGui::SameLine();
     ImGui::TextDisabled("%s", l10n::T("a terracotta plush, saved with your world"));
@@ -149,7 +149,7 @@ void Dial(const std::string& address) {
 }
 
 void RenderMenu() {
-    ImGui::SeparatorText(l10n::T("Quick connect"));
+    ImGui::SeparatorText(l10n::Label(l10n::T("Quick connect"), "sp_quick"));
     if (!g_addressSeeded) {
         g_addressSeeded = true;
         const std::string last =
@@ -161,14 +161,14 @@ void RenderMenu() {
     ImGui::SetNextItemWidth(ImGui::GetFontSize() * 16.f);
     ImGui::InputText("##qc_address", g_address, sizeof(g_address));
     ImGui::SameLine();
-    if (ImGui::Button(l10n::T("Paste"))) {
+    if (ImGui::Button(l10n::Label(l10n::T("Paste"), "sp_paste"))) {
         if (const char* clip = ImGui::GetClipboardText())
             std::snprintf(g_address, sizeof(g_address), "%s", clip);
     }
     ImGui::SameLine();
     const bool empty = g_address[0] == '\0';
     if (empty) ImGui::BeginDisabled();
-    if (ImGui::Button(l10n::T("Connect"))) Dial(g_address);
+    if (ImGui::Button(l10n::Label(l10n::T("Connect"), "sp_connect"))) Dial(g_address);
     if (empty) ImGui::EndDisabled();
 }
 
@@ -180,7 +180,7 @@ void Render() {
     const bool host = coop::roster::LocalIsHost();
     if (s.connected) {
         char line[160];
-        l10n::Fmt(line, sizeof(line), l10n::T("Connected as %s, %d connection(s), worst ping %d ms"),
+        l10n::Fmt(line, sizeof(line), l10n::T("Connected as %1$s, %2$d connection(s), worst ping %3$d ms"),
                   host ? l10n::T("host") : l10n::T("client"), s.peers, s.pingMaxMs < 0 ? 0 : s.pingMaxMs);
         ImGui::TextUnformatted(line);
     } else {

@@ -78,6 +78,7 @@ ALLOWLIST = [
     "src/ui/link_format.cpp",
     "src/ui/loading_screen.cpp",
     "src/ui/net_stats_panel.cpp",
+    "src/ui/session_pane.cpp",
     "src/ui/scoreboard.cpp",
     "src/ui/server_browser_actions.cpp",
     "src/ui/server_browser_native.cpp",
