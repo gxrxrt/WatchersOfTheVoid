@@ -197,6 +197,7 @@
 #include "coop/player/players_registry.h"
 #include "coop/props/prop_lifecycle.h"
 #include "coop/element/mirror_defer.h"
+#include "coop/fun/claude_figurine.h"
 #include "coop/props/pile_spawn_bind.h"       // OnDisconnect: a client's own parked clumps go back to the game
 #include "coop/props/prop_element_tracker.h"  // reseed hub consumer install + drain
 #include "coop/props/prop_save_data.h"
@@ -969,7 +970,8 @@ void TickGameplay(coop::net::Session& session, bool isConnected, bool isHost,
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::host_spawn_watcher::DrainPendingSpawns(&session); }  // adopt+express FinishSpawningActor Func-seam spawns (R-drop/place/Q-menu) one tick after Finish (key restored, hand actor excluded)
     if (isHost) { PP::Scope _s{PP::Bucket::Interactable}; coop::broom_push::Tick(); }  // HOST: stream the props and clumps a broom stroke pushed (AFTER the drain above, which names the trash that same stroke dispensed)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_lifecycle::TickHeldDestroys(); }  // CLIENT: keyed destroys held through a mid-session reconcile window
-    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::mirror_defer::Tick(); }  // CLIENT: the join hide window's backstop after the lift
+    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::mirror_defer::Tick(); }
+    { PP::Scope _s{PP::Bucket::TrashWatch};    coop::claude_figurine::Tick(); }  // every peer: dress the little Claudes  // CLIENT: the join hide window's backstop after the lift
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::prop_drop_intent::Tick(&session); }  // CLIENT: placement intents/deadlines; HOST: retry explicit outcomes after the spawn drain
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_form_assembler::Tick(); }  // GT FName-resolve the 2 verbs + bind the containment seams (latches once; no-op after)
     { PP::Scope _s{PP::Bucket::TrashWatch};    coop::kerfur_command::Tick(); }  // menu commands; HOST: each sender's queued request, paced

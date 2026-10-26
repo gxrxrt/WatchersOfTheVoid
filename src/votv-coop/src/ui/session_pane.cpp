@@ -7,7 +7,8 @@
 
 #include "coop/config/config.h"
 #include "coop/config/config_registry.h"
-#include "coop/creatures/npc_sync.h"     // GetSession: the running session, set at its start
+#include "coop/creatures/npc_sync.h"
+#include "coop/fun/claude_figurine.h"     // GetSession: the running session, set at its start
 #include "coop/net/net_stats.h"
 #include "coop/net/session.h"
 #include "coop/player/roster.h"          // LocalIsHost
@@ -127,6 +128,12 @@ void RenderHost(const NS::Snapshot& s) {
             static_cast<long long>(std::chrono::duration_cast<std::chrono::seconds>(left).count() + 1));
     }
     if (!g_resyncNote.empty()) ImGui::TextDisabled("%s", g_resyncNote.c_str());
+
+    ImGui::SeparatorText(l10n::T("Collectibles"));
+    if (ImGui::Button(l10n::T("Spawn a little Claude")))
+        GT::Post([] { coop::claude_figurine::SpawnNearLocalPlayer(); });
+    ImGui::SameLine();
+    ImGui::TextDisabled("%s", l10n::T("a terracotta plush, saved with your world"));
 }
 
 char g_address[128] = {};
