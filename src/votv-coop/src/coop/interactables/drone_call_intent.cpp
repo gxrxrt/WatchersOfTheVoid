@@ -58,9 +58,19 @@ constexpr float    kPressPerSecond = 1.0f;
 constexpr size_t   kMaxPending     = 4;
 constexpr uint64_t kRefusalSayMs   = 10000;
 
+// The drone's drop-sack verb. A client's drone is a mirror with no say over the sack: its local
+// dropSack minted a sack the host never had, and the heartbeat re-offered the option, so a client
+// could drop sack after sack. The client's body is refused; the host's drone drops the one sack.
+const wchar_t* const kDroneClass = L"drone_C";
+const wchar_t* const kDropVerb   = L"dropSack";
+constexpr int kTagDropSack = 0x44534b53;  // 'DSKS'
+constexpr float kDroneReachUU = 600.0f;
+
 std::atomic<coop::net::Session*> g_session{nullptr};
 bool g_watchInstalled = false;
 bool g_watchLive = false;
+bool g_dropWatchInstalled = false;
+bool g_dropWatchLive = false;
 
 uint64_t g_sent = 0, g_flown = 0, g_denied = 0;
 bool g_waitSaid[coop::net::kMaxPeers] = {};  // a sender's wait for its body, said once a streak
@@ -112,7 +122,9 @@ bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
     // The console carries no identity to name, so the sender's reach IS the resolve: of this
     // world's consoles, the one the sender is standing at. Any of them calls the same drone, so
     // the first within reach is the press.
-    const auto token = coop::element::IntentTarget::ForClientIntent(s, slot, kConsoleReachUU);
+    const bool dropSack = p.verb == coop::net::drone_verb::kDropSack;
+    const auto token = coop::element::IntentTarget::ForClientIntent(
+        s, slot, dropSack ? kDroneReachUU : kConsoleReachUU);
     if (!Current(epoch, occupant, slot)) return true;
     if (!token.HasBody()) {
         if (!g_waitSaid[slot]) {
@@ -121,6 +133,22 @@ bool Execute(coop::net::Session& s, const coop::net::DroneFlyIntentPayload& p, u
                     static_cast<unsigned>(slot));
         }
         return false;
+    }
+    if (dropSack) {
+        ue_wrap::CachedObjRef drone; drone.Set(ue_wrap::drone::Find());
+        if (!drone.Get()) return true;
+        const bool near = token.Authorize(drone.Raw()).outcome == coop::element::IntentOutcome::Ok;
+        if (!Current(epoch, occupant, slot) || !drone.Get()) return true;
+        if (!near || !(ue_wrap::drone::ReadFxBits(drone.Raw()) & ue_wrap::drone::kFxHasSack)) {
+            ++g_denied;
+            UE_LOGI("[DRONE-CALL] DENY drop-sack slot=%u -- %s", static_cast<unsigned>(slot),
+                    near ? "the host's drone carries no sack" : "the drone is out of reach");
+            return true;
+        }
+        const bool dropped = ue_wrap::drone::DropSack(drone.Raw());
+        UE_LOGI("[DRONE-CALL] drop-sack for slot=%u %s", static_cast<unsigned>(slot),
+                dropped ? "run on the host's drone" : "did not dispatch");
+        return true;
     }
     void* consoles[4];
     const int32_t nc = D::LiveConsoles(consoles, static_cast<int32_t>(std::size(consoles)));
@@ -209,24 +237,119 @@ sg::Verdict OnActionPre(const sg::Call& call) {
     return sg::Verdict::Cancel;
 }
 
+sg::Verdict OnDropSackPre(const sg::Call& call) {
+    auto* s = g_session.load(std::memory_order_acquire);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client || !call.object || call.fromOurCode)
+        return sg::Verdict::Run;
+    if (!coop::net_pump::IsInAnnouncedWorld(call.object)) return sg::Verdict::Run;
+    // Only the player's own option press becomes a request; any other route on the mirror (a timer
+    // the suppressed tick left behind) is simply refused, since the host's drone owns the sack.
+    const bool pressed = call.callerFunction &&
+        R::NameEquals(R::NameOf(call.callerFunction), L"actionOptionIndex");
+    if (!pressed) return sg::Verdict::Cancel;
+    coop::net::DroneFlyIntentPayload p{};
+    p.verb = coop::net::drone_verb::kDropSack;
+    World();
+    if (g_pending[0].size() < kMaxPending) {
+        g_pending[0].push_back({p, coop::active_drive::NowMs()});
+        UE_LOGI("[DRONE-CALL] drop-sack refused on this mirror -- asking the host's drone");
+    }
+    return sg::Verdict::Cancel;
+}
+
+// ---- the host's stall backstop ----------------------------------------------------------------
+// Reported in play: a drone that never flies back. Two shapes are seen from the host's own state,
+// so the backstop needs no packet. Parked at the drop with the five-minute departure chosen and
+// still there well past it (a sack lane left the host's drone without its sack, so triggerFly keeps
+// refusing): press the console's verb, and on a second try give the drone its sack flag back first.
+// Flying but not moving for a long time (blocked short of its pad): lift it. "Wait indefinitely"
+// is the player's choice and is never forced. Only an Active drone is judged: a dormant one at home
+// is left alone, so a wrong read fails safe.
+constexpr uint64_t kParkedOverdueMs = 390000;  // the five-minute departure plus a grace
+constexpr uint64_t kStuckMs         = 45000;
+constexpr uint64_t kRetryMs         = 5000;
+constexpr float    kMovedUU         = 50.0f;
+constexpr int      kMaxNudges       = 3;
+struct Backstop {
+    uint64_t nextCheckMs = 0, parkedSinceMs = 0, lastMoveMs = 0, nextActMs = 0;
+    ue_wrap::FVector lastPos{};
+    bool havePos = false;
+    int presses = 0, nudges = 0;
+};
+Backstop g_wd;
+
+void HostBackstop() {
+    const uint64_t now = coop::active_drive::NowMs();
+    if (now < g_wd.nextCheckMs) return;
+    g_wd.nextCheckMs = now + 250;
+    void* drone = ue_wrap::drone::Find();
+    ue_wrap::FVector loc; ue_wrap::FRotator rot;
+    if (!drone || !ue_wrap::drone::IsActive(drone) || !ue_wrap::drone::ReadPose(drone, loc, rot)) {
+        g_wd = Backstop{}; g_wd.nextCheckMs = now + 1000;
+        return;
+    }
+    const uint8_t bits = ue_wrap::drone::ReadFxBits(drone);
+    const bool arrived = (bits & ue_wrap::drone::kFxArrived) != 0;
+    const bool hasSack = (bits & ue_wrap::drone::kFxHasSack) != 0;
+    const bool leave5  = (bits & ue_wrap::drone::kFxLeaveAfter5min) != 0;
+    const float dx = loc.X - g_wd.lastPos.X, dy = loc.Y - g_wd.lastPos.Y, dz = loc.Z - g_wd.lastPos.Z;
+    if (!g_wd.havePos || dx * dx + dy * dy + dz * dz > kMovedUU * kMovedUU) {
+        g_wd.lastPos = loc; g_wd.havePos = true; g_wd.lastMoveMs = now; g_wd.nudges = 0;
+    }
+    if (!arrived) { g_wd.parkedSinceMs = 0; g_wd.presses = 0; }
+    else if (!g_wd.parkedSinceMs) g_wd.parkedSinceMs = now;
+    if (now < g_wd.nextActMs) return;
+
+    if (arrived && leave5 && now - g_wd.parkedSinceMs > kParkedOverdueMs && g_wd.presses < 2) {
+        void* consoles[4];
+        if (D::LiveConsoles(consoles, 4) < 1) return;
+        // triggerFly refuses while the drone has no sack and one lies in the world; the second try
+        // hands the flag back so the departure is not held hostage by a stray sack.
+        if (g_wd.presses == 1 && !hasSack) ue_wrap::drone::WriteGateFields(drone, true, true);
+        const bool pressed = D::TriggerFly(consoles[0]);
+        ++g_wd.presses; g_wd.nextActMs = now + kRetryMs;
+        UE_LOGW("[DRONE-WD] parked %llus past arrival (sack=%d) -- departure press %d %s",
+                static_cast<unsigned long long>((now - g_wd.parkedSinceMs) / 1000), hasSack ? 1 : 0,
+                g_wd.presses, pressed ? "dispatched" : "did not dispatch");
+        return;
+    }
+    if (!arrived && now - g_wd.lastMoveMs > kStuckMs && g_wd.nudges < kMaxNudges) {
+        const bool moved = ue_wrap::drone::Nudge(drone, ue_wrap::FVector{0.f, 0.f, 300.f});
+        ++g_wd.nudges; g_wd.lastMoveMs = now; g_wd.nextActMs = now + kRetryMs;
+        UE_LOGW("[DRONE-WD] in flight but still for %llus -- lift %d/%d %s",
+                static_cast<unsigned long long>(kStuckMs / 1000), g_wd.nudges, kMaxNudges,
+                moved ? "applied" : "failed");
+    }
+}
+
+void InstallWatches() {
+    if (!g_watchInstalled)
+        g_watchInstalled = sg::WatchClassName(kConsoleClass, kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
+    if (!g_dropWatchInstalled)
+        g_dropWatchInstalled = sg::WatchClassName(kDroneClass, kDropVerb, kTagDropSack, &OnDropSackPre, nullptr);
+}
+
 }  // namespace
 
 void Install(coop::net::Session* session) {
     g_session.store(session, std::memory_order_release);
     World();
-    if (!g_watchInstalled)
-        g_watchInstalled = sg::WatchClassName(kConsoleClass, kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
+    InstallWatches();
 }
 
 void Tick(coop::net::Session& session) {
     sg::ResolvePendingNames();
-    if (!g_watchInstalled) {
-        g_watchInstalled = sg::WatchClassName(kConsoleClass, kActionVerb, kTagDroneCall, &OnActionPre, nullptr);
+    if (!g_watchInstalled || !g_dropWatchInstalled) {
+        InstallWatches();
         return;
     }
     if (!g_watchLive && sg::ClassNameWatchLive(kConsoleClass, kActionVerb, kTagDroneCall)) {
         g_watchLive = true;
         UE_LOGI("[DRONE-CALL] the console action gate is live");
+    }
+    if (!g_dropWatchLive && sg::ClassNameWatchLive(kDroneClass, kDropVerb, kTagDropSack)) {
+        g_dropWatchLive = true;
+        UE_LOGI("[DRONE-CALL] the drop-sack gate is live");
     }
     if (!session.connected() || g_ticking) return;
     World();
@@ -242,6 +365,7 @@ void Tick(coop::net::Session& session) {
         }
         return;
     }
+    HostBackstop();
     for (uint8_t slot = 1; slot < coop::net::kMaxPeers; ++slot) {
         if (g_pending[slot].empty() || !TakeToken(slot)) continue;
         const Request r = g_pending[slot].front();
@@ -303,6 +427,7 @@ void OnDisconnect() {
         g_waitSaid[slot] = false;
     }
     g_sent = g_flown = g_denied = 0;
+    g_wd = Backstop{};
 }
 
 }  // namespace coop::drone_call_intent

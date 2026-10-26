@@ -397,4 +397,18 @@ void RepointContainer(void* drone) {
     }
 }
 
+bool DropSack(void* drone) {
+    if (!drone || !R::IsLive(drone)) return false;
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(drone), L"dropSack");
+    if (!fn) return false;
+    ParamFrame f(fn);
+    return f.valid() && Call(drone, f);
+}
+
+bool Nudge(void* drone, const FVector& delta) {
+    FVector loc; FRotator rot;
+    if (!ReadPose(drone, loc, rot)) return false;
+    return DriveMirror(drone, FVector{loc.X + delta.X, loc.Y + delta.Y, loc.Z + delta.Z}, rot);
+}
+
 }  // namespace ue_wrap::drone

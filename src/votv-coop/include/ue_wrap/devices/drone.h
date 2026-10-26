@@ -112,4 +112,12 @@ void WriteGateFields(void* drone, bool canTakeOff, bool hasSack);
 // container (Aprop_inventoryContainer_drone_C) so openPropInv opens it. Idempotent. Game thread.
 void RepointContainer(void* drone);
 
+// HOST: run the drone's own dropSack (the drop-sack option's body), so the one authoritative sack is
+// born on the host and reaches peers on the ordinary prop birth path. Game thread.
+bool DropSack(void* drone);
+
+// HOST: move the drone by `delta` keeping its rotation (the watchdog's un-stick nudge; the pose
+// stream carries it to the mirrors). Game thread.
+bool Nudge(void* drone, const FVector& delta);
+
 }  // namespace ue_wrap::drone

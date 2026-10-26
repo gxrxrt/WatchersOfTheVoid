@@ -3784,7 +3784,8 @@ static_assert(sizeof(GrabRefusedPayload) == 8, "GrabRefusedPayload must be 8 byt
 namespace drone_verb {
 constexpr uint8_t kCall = 0;        // the keyboard's call/send
 constexpr uint8_t kLeaveTimer = 2;  // the leave timer face, a toggle on the host
-constexpr uint8_t kMax = kLeaveTimer;
+constexpr uint8_t kDropSack = 3;    // the drone's drop-sack option, performed by the host's drone
+constexpr uint8_t kMax = kDropSack;
 }  // namespace drone_verb
 struct DroneFlyIntentPayload {
     uint8_t verb;        // 0 = call/send, 1 = legacy absolute preference, 2 = timer press
