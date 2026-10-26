@@ -51,6 +51,7 @@ constexpr int      kTagChest = 0x43520002;
 constexpr int      kTagKey   = 0x43520003;
 constexpr int      kTagAch   = 0x43520004;
 constexpr int      kTagMiner = 0x43520005;
+constexpr int      kTagMinerUsed = 0x43520006;
 constexpr float    kUseReach = 500.f;
 constexpr float    kKeyReach = 1500.f;
 constexpr float    kKeyGapCm = 250.f;
@@ -158,7 +159,26 @@ sg::Verdict OnSack(const sg::Call& c) {
     return sg::Verdict::Cancel;
 }
 
+// A client's own edit of a miner -- a GPU board or cooler put in or taken out, the power switch --
+// ran on its copy only, while the board it spent was destroyed on every peer: the host's farm never
+// got the part and the part was gone. The edited miner's record goes to the host as an intent (the
+// prop record lane's client path), the host loads it and re-publishes it to every peer.
+void PublishClientMinerEdit(const sg::Call& c) {
+    if (c.fromOurCode || !IsClient() || !IsA(c.object, L"prop_miner_C")) return;
+    coop::net::WireKey key{};
+    uint32_t eid = 0;
+    FillIds(c.object, key, eid);
+    const std::wstring keyString = coop::net::StringFromWireKey(key);
+    if (keyString.empty() || keyString == L"None") return;
+    const bool sent = coop::prop_save_data::Publish(Session(), c.object, keyString);
+    UE_LOGI("credit: client miner edit '%ls' -> host record %s", keyString.c_str(),
+            sent ? "sent" : "queued for retry");
+}
+
+void OnMinerUsedPost(const sg::Call& c) { PublishClientMinerEdit(c); }
+
 void OnMinerPost(const sg::Call& c) {
+    if (IsA(c.object, L"prop_miner_C") && ActionOf(c) != 4) { PublishClientMinerEdit(c); return; }
     if (!IsA(c.object, L"prop_miner_C") || ActionOf(c) != 4) return;
     auto* s = Session();
     if (s && s->connected() && s->role() == coop::net::Role::Host) {
@@ -495,6 +515,7 @@ void Install(coop::net::Session* session) {
     g_watched = true;
     sg::WatchClassName(L"prop_pointSack_C", L"actionOptionIndex", kTagSack, &OnSack, nullptr);
     sg::WatchClassName(L"prop_miner_C", L"actionOptionIndex", kTagMiner, &OnMiner, &OnMinerPost);
+    sg::WatchClassName(L"prop_miner_C", L"playerUsedOn", kTagMinerUsed, nullptr, &OnMinerUsedPost);
     sg::WatchClassName(L"prop_treasureChest_C", L"actionOptionIndex", kTagChest, &OnChest, nullptr);
     sg::WatchClassName(L"prop_treasureChest_C", kOverlap, kTagKey, &OnKeyOverlap, nullptr);
     sg::WatchClassName(L"save_main_C", L"progressAchievement", kTagAch, &OnAchPreGate, &OnAchPost);

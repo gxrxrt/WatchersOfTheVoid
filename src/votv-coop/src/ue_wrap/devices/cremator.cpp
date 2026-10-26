@@ -82,9 +82,12 @@ bool ReadBool(void* actor, const wchar_t* name, bool& out) {
 }
 
 bool CanUseLever(void* actor) {
-    bool info = false, looking = false;
-    return CanReplayLever(actor) && ReadBool(actor, L"lookingAt_info", info) && info &&
-           ReadBool(actor, L"lookingAt_handle", looking) && looking;
+    // The client-side question is only "is this press the lever": the game's own gate is the handle.
+    // lookingAt_info is not part of it, and the mirror's anim is the client's paint, not the
+    // machine's state -- requiring either let a real lever press run as a local replica the host
+    // never heard of. The host still judges anim before it replays (CanReplayLever).
+    bool looking = false;
+    return IsCremator(actor) && ReadBool(actor, L"lookingAt_handle", looking) && looking;
 }
 
 bool CanReplayLever(void* actor) {

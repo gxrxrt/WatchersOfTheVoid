@@ -177,6 +177,9 @@ bool Execute(coop::net::Session& s, const coop::net::DoorVerbIntentPayload& p, u
             if (subject.outcome == coop::element::IntentOutcome::NoBody) return false;
             if (!subject || p.action != 4 || !ue_wrap::cremator::CanReplayLever(cremator)) {
                 ++g_denied;
+                UE_LOGI("[DOOR-VERB] DENY cremator lever slot=%u -- %s", static_cast<unsigned>(slot),
+                        !subject ? "out of reach" : (p.action != 4 ? "not the lever action"
+                                                                   : "the lever is still moving here"));
                 return true;
             }
             bool active = false;

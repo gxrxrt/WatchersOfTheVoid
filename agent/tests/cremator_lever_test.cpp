@@ -66,8 +66,8 @@ int main() {
     machine.cls = &cls;
     assert(C::IsCremator(&machine)); // An unloaded door class must not disable the machine.
     assert(C::CanUseLever(&machine));
-    machine.anim = true; assert(!C::CanReplayLever(&machine));
-    machine.anim = false; machine.info = false; assert(!C::CanUseLever(&machine));
+    machine.anim = true; assert(!C::CanReplayLever(&machine)); assert(C::CanUseLever(&machine)); // the host judges anim
+    machine.anim = false; machine.info = false; assert(C::CanUseLever(&machine)); // info is not the game's gate
     machine.info = true; machine.looking = false; assert(!C::CanUseLever(&machine));
     machine.looking = true;
     bool active = true;
