@@ -668,7 +668,13 @@ void OnReliable(const coop::net::EventFirePayload& payload) {
     const char* lane = nullptr;
     const int verdict = ReplayVerdict(name, &lane);
     if (verdict == 0) {
-        UE_LOGI("event_fire: '%s' NOT replayed (%s)", name.c_str(), lane);
+        // A row whose policy names no lane is an event this client will not see at all: said as a
+        // warning, so a "the event only happened for the host" report finds it in the log.
+        if (lane && std::strstr(lane, "no lane"))
+            UE_LOGW("event_fire: '%s' NOT replayed and no lane carries it (%s) -- host-only event",
+                    name.c_str(), lane);
+        else
+            UE_LOGI("event_fire: '%s' NOT replayed (%s)", name.c_str(), lane);
         return;
     }
     if (verdict < 0) {

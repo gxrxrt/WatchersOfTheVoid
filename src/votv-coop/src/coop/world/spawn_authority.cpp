@@ -17,18 +17,28 @@
 #include "coop/world/spawn_authority.h"
 
 #include "coop/net/session.h"
+#include "ue_wrap/core/game_thread.h"
 #include "ue_wrap/core/log.h"
+#include "ue_wrap/core/reflection.h"
 #include "ue_wrap/core/script_gate.h"
+#include "ue_wrap/core/ufunction_hook.h"
+#include "ue_wrap/engine/engine.h"
 #include "ue_wrap/facts/function_row.h"
 
 #include <atomic>
 #include <cstdint>
 #include <iterator>
+#include <utility>
+#include <vector>
 
 namespace coop::spawn_authority {
 namespace {
 
 namespace SG = ue_wrap::script_gate;
+namespace R  = ue_wrap::reflection;
+namespace UH = ue_wrap::ufunction_hook;
+namespace GT = ue_wrap::game_thread;
+namespace E  = ue_wrap::engine;
 
 std::atomic<coop::net::Session*> g_session{nullptr};
 
@@ -98,18 +108,10 @@ constexpr Row kRows[] = {
     {&kRowReceiveTickTickerFossilhoundSpawner, nullptr, nullptr, "fossilhoundSpawner.ReceiveTick"},
     {&kRowReceiveTickCockroachMaster, nullptr, nullptr, "cockroachMaster.ReceiveTick"},
     {&kRowReceiveTickTickerRoachSummoner, nullptr, nullptr, "roachSummoner.ReceiveTick"},
-    // The event actors the world-actor lane mirrors whose own begin-play spawns the event's content
-    // (the follower's balls, the egger's eggs, the cleaner's sponge, a dropper's cargo, the deployed
-    // tank's gun): on a client each is a pose-driven mirror, and its begin-play would spawn a local
-    // copy of what the host's creature and world-actor lanes deliver. The droppers' base body serves
-    // the body and car drops; the pig and tank drops override it with bodies of their own.
-    {nullptr, L"tentacleBallsFollower_C", L"ReceiveBeginPlay", "tentacleBallsFollower.ReceiveBeginPlay"},
+    // The super egger's begin-play is still refused whole: it is the egg rain and nothing else.
+    // The other event mirrors (follower, cleaner, droppers, deploying tank) keep their begin-play
+    // for its presentation; what they spawn is dissolved below (kMirrorSpawnSources).
     {&kRowReceiveBeginPlaySuperEgger, nullptr, nullptr, "superEgger.ReceiveBeginPlay"},
-    {nullptr, L"soltomiaCleaning_C", L"ReceiveBeginPlay", "soltomiaCleaning.ReceiveBeginPlay"},
-    {nullptr, L"ufoDropper_C", L"ReceiveBeginPlay", "ufoDropper.ReceiveBeginPlay"},
-    {nullptr, L"ufoDropper_pig_C", L"ReceiveBeginPlay", "ufoDropper_pig.ReceiveBeginPlay"},
-    {nullptr, L"ufoDropper_tank_C", L"ReceiveBeginPlay", "ufoDropper_tank.ReceiveBeginPlay"},
-    {nullptr, L"firetankDeploy_C", L"ReceiveBeginPlay", "firetankDeploy.ReceiveBeginPlay"},
     // This placed controller creates both kavotia_C and igetis_C in its BeginPlay graph. The
     // host's EX-spawn catch above owns both products; a client run would mint an uncaught pair.
     {&kRowReceiveBeginPlayKavotiaPatrolController, nullptr, nullptr,
@@ -147,6 +149,48 @@ SG::Verdict OnRowPre(const SG::Call& call) {
 
 std::atomic<bool> g_watched{false};
 
+// The event actors a client holds as pose-driven mirrors (the world-actor lane). Refusing their
+// whole begin-play also took what they draw -- lights, beams, particles, the fly-in -- so on a client
+// the event's actor stood blank or invisible while the host saw the event. Their graphs now run;
+// what they would SPAWN (the follower's balls, the cleaner's sponge, a dropper's cargo, the deployed
+// tank's gun) is the host's to deliver through the creature, world-actor and prop lanes, so a
+// deferred spawn whose source is one of them is dissolved: the Blueprint's result is nulled and the
+// unfinished actor is destroyed by a posted task (the explosion lane's dissolve). Subclasses match
+// through a short super walk: the body and car droppers derive from ufoDropper_C.
+constexpr const wchar_t* kMirrorSpawnSources[] = {
+    L"tentacleBallsFollower_C", L"soltomiaCleaning_C", L"ufoDropper_C",
+    L"ufoDropper_pig_C",        L"ufoDropper_tank_C",  L"firetankDeploy_C",
+};
+UE_FACT_FN(kRowBeginDeferredSpawnMirror, "spawn_authority", L"GameplayStatics",
+           L"BeginDeferredActorSpawnFromClass", Declared);
+std::uint64_t g_dissolved = 0;
+
+bool IsMirrorSpawnSource(void* cls) {
+    static std::vector<std::pair<void*, bool>> s_verdicts;  // game thread, as the spawn is
+    for (const auto& v : s_verdicts) if (v.first == cls) return v.second;
+    bool yes = false;
+    for (void* c = cls; c && !yes; c = R::SuperStructOf(c))
+        for (const wchar_t* name : kMirrorSpawnSources)
+            if (R::NameEquals(R::NameOf(c), name)) { yes = true; break; }
+    if (s_verdicts.size() < 4096) s_verdicts.emplace_back(cls, yes);
+    return yes;
+}
+
+void OnDeferredSpawn(void* /*context*/, void* source, void* result) {
+    if (!result || !source || !IsActiveClientSession()) return;
+    void* cls = R::ClassOf(source);
+    if (!cls || !IsMirrorSpawnSource(cls)) return;
+    const int32_t index = R::InternalIndexOf(result);
+    if (void** r = static_cast<void**>(UH::CurrentResult())) *r = nullptr;
+    GT::Post([result, index] {
+        if (R::IsLiveByIndex(result, index)) E::DestroyActor(result);
+    });
+    const std::uint64_t n = ++g_dissolved;
+    if ((n & (n - 1)) == 0)
+        UE_LOGI("spawn_authority: dissolved a spawn of event mirror %ls (#%llu) -- the host's lanes deliver it",
+                R::ClassNameOf(source).c_str(), static_cast<unsigned long long>(n));
+}
+
 }  // namespace
 
 // Refuse only while an active client session exists: the running flag flips true in the session
@@ -175,6 +219,12 @@ void Install(coop::net::Session* session) {
     }
     UE_LOGI("spawn_authority: %d/%d spawner watches registered by class and name, each live once the game "
             "thread resolves its names; refused only on an active client session", watched, kRowCount);
+    const ue_wrap::facts::Resolved spawnRow = ue_wrap::facts::Resolve(kRowBeginDeferredSpawnMirror);
+    if (spawnRow && UH::InstallPostHook(spawnRow, &OnDeferredSpawn))
+        UE_LOGI("spawn_authority: event-mirror spawn dissolve installed (%zu source classes)",
+                std::size(kMirrorSpawnSources));
+    else
+        UE_LOGW("spawn_authority: event-mirror spawn dissolve NOT installed -- event mirrors may spawn local copies");
 }
 
 }  // namespace coop::spawn_authority

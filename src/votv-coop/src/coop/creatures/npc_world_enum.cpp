@@ -25,6 +25,7 @@
 #include "ue_wrap/core/ufunction_hook.h"   // the EX_CallMath spawn-catch thunk
 #include "ue_wrap/facts/function_row.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -170,6 +171,27 @@ bool IsWaAllowlistedClass(void* cls) {
     return false;
 }
 
+// The world-actor classes mirrored whoever spawns them, cached per class. Excluded: the classes a
+// dedicated lane owns end to end (the ariral ship, the walking pyramid, the coin), where a second
+// enrolment would race that lane's own.
+bool IsWaOutputAnySource(void* cls) {
+    static std::mutex s_mx;
+    static std::vector<std::pair<void*, bool>> s_verdicts;
+    {
+        std::lock_guard<std::mutex> lk(s_mx);
+        for (const auto& v : s_verdicts) if (v.first == cls) return v.second;
+    }
+    bool yes = IsWaAllowlistedClass(cls);
+    if (yes) {
+        const auto& nm = R::NameOf(cls);
+        for (const wchar_t* own : {L"arirShip_C", L"piramid2_C", L"piramidSubpawn_C", L"baocoin_C"})
+            if (R::NameEquals(nm, own)) { yes = false; break; }
+    }
+    std::lock_guard<std::mutex> lk(s_mx);
+    if (s_verdicts.size() < 4096) s_verdicts.emplace_back(cls, yes);
+    return yes;
+}
+
 // Queue entries carry the internal index captured at catch time, so the drain validates with
 // the index-paired liveness check; a raw pointer cached across a tick boundary is the recycle
 // hazard. Cleared on disconnect.
@@ -203,11 +225,38 @@ void OnBeginDeferredExSpawn(void* /*context*/, void* srcObj, void* spawned) {
     const ExSpawnSource* source = nullptr;
     for (const ExSpawnSource& e : kExSpawnSources)
         if (_wcsicmp(srcName.c_str(), e.cls) == 0) { source = &e; break; }
-    if (!source) return;
     void* cls = R::ClassOf(spawned);
     if (!cls) return;
-    coop::npc_sync::RefreshLateAllowlist();  // an event creature's class may have just loaded
-    if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) return;
+    if (!source) {
+        // An allowlisted event actor is event output whoever spawns it: a trigger, a dropper or
+        // the event actor itself (skyUfo_C, skyFallingEvent_C were spawned from no listed source
+        // and stayed host-only). Classes with a lane of their own keep it. The verdict is cached
+        // per class so ambient spawns pay the name walk once.
+        if (!IsWaOutputAnySource(cls)) return;
+        static std::mutex s_saidMx;
+        static std::vector<void*> s_said;
+        std::lock_guard<std::mutex> lk(s_saidMx);
+        if (std::find(s_said.begin(), s_said.end(), cls) == s_said.end()) {
+            s_said.push_back(cls);
+            UE_LOGI("npc-sync[ex-spawn]: '%ls' spawned by unlisted '%ls' -- enrolled as a world actor",
+                    R::ToString(R::NameOf(cls)).c_str(), srcName.c_str());
+        }
+    } else {
+        coop::npc_sync::RefreshLateAllowlist();  // an event creature's class may have just loaded
+        if (!coop::npc_sync::IsAllowlistedClass(cls) && !IsWaAllowlistedClass(cls)) {
+            // An event source made something nothing mirrors: the client sees no trace of it. Said
+            // once per class, so the next two-player run names exactly what an event is missing.
+            static std::mutex s_missMx;
+            static std::vector<void*> s_missed;
+            std::lock_guard<std::mutex> lk(s_missMx);
+            if (std::find(s_missed.begin(), s_missed.end(), cls) == s_missed.end() && s_missed.size() < 64) {
+                s_missed.push_back(cls);
+                UE_LOGW("npc-sync[ex-spawn]: event source '%ls' spawned '%ls' -- NOT mirrored (host-only)",
+                        srcName.c_str(), R::ToString(R::NameOf(cls)).c_str());
+            }
+            return;
+        }
+    }
     const int32_t idx = R::InternalIndexOf(spawned);
     std::lock_guard<std::mutex> lk(g_pendingMx);
     if (g_pendingExSpawns.size() >= kMaxPendingExSpawns) {
