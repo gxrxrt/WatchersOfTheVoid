@@ -175,6 +175,8 @@ inline constexpr const wchar_t* kWorldActorAllowlist[] = {
                                    // kExSpawnSourceClasses lets the Func-thunk drain reach
                                    // world_actor_sync::HostEnrollExSpawn, which allocates the eid.
     L"dreamer_dreambase_C",         // the sleep-horror dreambase event actor (host spawn + transform lane)
+    L"arirSlapper_C",               // the ariral base chest's slapper: spawned by the chest on the opener's peer
+                                    // only (seen in play: the other player saw and heard nothing)
 };
 inline constexpr size_t kWorldActorAllowlistSize =
     sizeof(kWorldActorAllowlist) / sizeof(kWorldActorAllowlist[0]);

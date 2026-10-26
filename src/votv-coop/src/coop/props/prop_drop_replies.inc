@@ -144,10 +144,22 @@ void PlacementTick(net::Session* session) {
         PublishAccepted(session);
         // Copy before transport/native boundaries; a callback can clear or append to the queue.
         std::vector<AwaitingHost> retry;
+        // An accepted placement whose local actor never takes the host's identity (the host's
+        // re-express lands on it by key without binding an eid) was re-asked every second for the
+        // rest of the session, and every ask made the host re-send the prop: a standing loop. The
+        // host already has the prop, so a few re-asks are enough and the row is then let go.
+        constexpr uint8_t kAcceptedRetries = 3;
+        std::erase_if(g_awaitingHost, [](const AwaitingHost& row) {
+            if (!row.accepted || row.acceptedRetries < kAcceptedRetries) return false;
+            UE_LOGI("[PROP-DROP] role=client request=%u key='%ls' accepted by the host; local actor never "
+                    "bound -- no more re-asks", row.request.requestId, row.key.c_str());
+            return true;
+        });
         for (auto& row : g_awaitingHost) {
             void* a = row.actor.Get();
             if (!a || (row.recordSubmitted && PT::GetPropElementIdForActor(a) != coop::element::kInvalidId) || now < row.next) continue;
             if (retry.size() < 4) {
+                if (row.accepted) ++row.acceptedRetries;
                 row.next = now + 1000;
                 retry.push_back(row);
             }

@@ -436,7 +436,13 @@ sg::Verdict OnDoor(const sg::Call& c) {
     if (!parent || !K::OwnsDoor(parent) || !net_pump::IsInAnnouncedWorld(parent)) return sg::Verdict::Run;
     // A receiver's hinge can touch its stop between snapshots. Only the host
     // decides that automatic close; forwarding it would undo a peer's drag.
-    if (c.tag==0x4B540007 && K::DoorUser(parent)!=players::Registry::Get().Local()) return sg::Verdict::Cancel;
+    // The dragging client's own hinge too: its drag is cancelled locally and sent as mouse
+    // motion, so its door never leaves the stop and the Blueprint closes it at once. Forwarded,
+    // that close undid every open on the host (seen in play: an open and a close per grab, the
+    // door snapping back). The host's own hinge closes the door when the drag brings it home.
+    // Scoped to the cremator, the reported door; the appliances keep their forwarded close.
+    if (c.tag==0x4B540007 && (K::Type(parent)==K::Kind::Cremator ||
+                              K::DoorUser(parent)!=players::Registry::Get().Local())) return sg::Verdict::Cancel;
     net::KitchenIntentPayload p{};
     Identity(parent,p.key,p.elementId); p.op=c.tag==0x4B540006 ? 2 : 3;
     if (p.key.len || p.elementId) g_session.load()->SendReliable(net::ReliableKind::KitchenIntent,&p,sizeof(p));

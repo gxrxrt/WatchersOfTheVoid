@@ -160,6 +160,7 @@ std::atomic<bool> g_watched{false};
 constexpr const wchar_t* kMirrorSpawnSources[] = {
     L"tentacleBallsFollower_C", L"soltomiaCleaning_C", L"ufoDropper_C",
     L"ufoDropper_pig_C",        L"ufoDropper_tank_C",  L"firetankDeploy_C",
+    L"arirSlapper_C",
 };
 UE_FACT_FN(kRowBeginDeferredSpawnMirror, "spawn_authority", L"GameplayStatics",
            L"BeginDeferredActorSpawnFromClass", Declared);

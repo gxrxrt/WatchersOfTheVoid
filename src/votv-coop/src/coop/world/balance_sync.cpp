@@ -12,6 +12,7 @@
 
 #include <atomic>
 #include <array>
+#include <chrono>
 #include <cstdint>
 
 namespace coop::balance_sync {
@@ -49,12 +50,22 @@ void Deliver(net::Session* s, int slot, int32_t points, uint64_t epoch, uint32_t
     if (row.occupant != occupant) { row = {}; row.occupant = occupant; }
     if (!s->IsSlotReady(slot)) { row.sent = false; return; }
     if (row.sent && row.total == points && row.requested == row.delivered) return;
+    // Seen in play: the same total re-sent to the same occupant every frame for a whole session
+    // (115k sends). Whatever keeps the row from converging, an identical value to the same
+    // occupant needs no second send within a quarter second; a request then rides the next one.
+    static std::array<uint64_t, net::kMaxPeers> s_lastMs{};
+    static std::array<int64_t, net::kMaxPeers> s_lastKey{};
+    const uint64_t nowMs = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+    const int64_t sendKey = (static_cast<int64_t>(occupant) << 32) | static_cast<uint32_t>(points);
+    if (s_lastKey[slot] == sendKey && nowMs - s_lastMs[slot] < 250) return;
     const auto request = row.requested;
     const net::BalancePayload p{points};
     const bool sent = s->SendReliableToSlot(slot, net::ReliableKind::BalanceSync, &p, sizeof(p));
     if (!Current(s, epoch, world) || s->peerGenerationForSlot(slot) != occupant) return;
     if (!sent) return; // Every recipient retains its own delivery debt.
     row.sent = true; row.total = points; row.delivered = request;
+    s_lastKey[slot] = sendKey; s_lastMs[slot] = nowMs;
     UE_LOGI("balance_sync: sent Points=%d to slot %d", points, slot);
 }
 

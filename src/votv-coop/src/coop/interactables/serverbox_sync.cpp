@@ -197,6 +197,13 @@ void Deliver(coop::net::Session* s, int slot, const coop::net::ServerStatePayloa
     if (row.occupant != occupant) { row = {}; row.occupant = occupant; }
     if (!s->HasPeerConn(slot) || !s->IsSlotWorldReady(slot)) { row.sent = false; return; }
     if (row.sent && row.requested == row.delivered && !StateChanged(p, row.last)) return;
+    // The same guard as balance_sync's: in play this row re-sent an unchanged state every frame.
+    static uint64_t s_lastMs[coop::net::kMaxPeers] = {};
+    static uint32_t s_lastOccupant[coop::net::kMaxPeers] = {};
+    static coop::net::ServerStatePayload s_last[coop::net::kMaxPeers] = {};
+    const long long nowMs = NowMs();
+    if (slot > 0 && slot < coop::net::kMaxPeers && s_lastOccupant[slot] == occupant &&
+        !StateChanged(p, s_last[slot]) && nowMs - static_cast<long long>(s_lastMs[slot]) < 250) return;
     const uint64_t request = row.requested;
     const bool sent = s->SendReliableToSlot(slot, coop::net::ReliableKind::ServerState, &p, sizeof(p));
     if (!Current(s, root) || s->peerGenerationForSlot(slot) != occupant) return;
@@ -204,6 +211,9 @@ void Deliver(coop::net::Session* s, int slot, const coop::net::ServerStatePayloa
     // accepted send can retire this recipient's debt.
     if (!sent) return;
     row.sent = true; row.last = p; row.delivered = request;
+    if (slot > 0 && slot < coop::net::kMaxPeers) {
+        s_lastOccupant[slot] = occupant; s_last[slot] = p; s_lastMs[slot] = static_cast<uint64_t>(nowMs);
+    }
     UE_LOGI("serverbox_sync: host state sent to slot %d (broken=%d mask=0x%llX damaged=0x%llX count=%d)", slot,
         p.brokenServers, static_cast<unsigned long long>(p.isBrokenMask),
         static_cast<unsigned long long>(p.damagedMask), p.serverCount);

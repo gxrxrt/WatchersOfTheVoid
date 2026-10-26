@@ -107,6 +107,7 @@ struct AwaitingHost {
     net::ReliableKind kind = net::ReliableKind::PropDropIntent;
     uint64_t next = 0;
     bool accepted = false, recordSubmitted = false, parked = false;
+    uint8_t acceptedRetries = 0;  // re-asks after the host already accepted (see PlacementTick)
 };
 std::vector<AwaitingHost> g_awaitingHost;
 uint64_t g_pendingEpoch = 0;
