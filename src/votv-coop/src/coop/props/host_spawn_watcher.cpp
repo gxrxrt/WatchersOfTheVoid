@@ -11,6 +11,7 @@
 #include "coop/player/hand_item.h"          // LocalHandActor (drain: hotbar view-actor exclusion)
 #include "coop/props/prop_echo_suppress.h"  // IsMirrorSpawn (mirror-spawn exclusion)
 #include "coop/props/prop_element_tracker.h"
+#include "coop/props/prop_synth_key.h"  // MintFreshKeyForDuplicate (a keyless host spawn)
 #include "coop/props/prop_wire_parity.h"
 #include "coop/props/prop_drive_host.h"
 #include "coop/props/prop_lifecycle.h"      // ExpressSpawnedProp (reuse the keyed broadcast)
@@ -501,11 +502,22 @@ void DrainPendingSpawns(coop::net::Session* s) {
         // Init observer may have spent its dedupe mark before the final key existed,
         // without enrolling anything. The finished-spawn queue is explicit provenance:
         // retry only this live, host-owned, still-untracked actor after its key is ready.
-        const std::wstring finalKey = ue_wrap::prop::GetInteractableKeyString(actor);
+        std::wstring finalKey = ue_wrap::prop::GetInteractableKeyString(actor);
         if (!current()) continue;
         if (finalKey.empty() || finalKey == L"None") {
-            if (++e.tries <= 8) keep.push_back(e);
-            continue;
+            if (++e.tries <= 8) { keep.push_back(e); continue; }
+            // Still keyless after the retries: the Blueprint that made it never keys it. Dropping
+            // it here left a host prop no client ever saw, until someone grabbed it. The host gives
+            // it a persisted key (the duplicate-key census's kind) and expresses it like any birth.
+            finalKey = coop::prop_synth_key::MintFreshKeyForDuplicate(actor);
+            if (!current()) continue;
+            if (finalKey.empty() || finalKey == L"None") {
+                UE_LOGW("host_spawn_watcher: actor=%p class='%ls' stays keyless -- not expressed",
+                        actor, R::ClassNameOf(actor).c_str());
+                continue;
+            }
+            UE_LOGI("host_spawn_watcher: keyless host spawn %p class='%ls' minted key '%ls' and expressed",
+                    actor, R::ClassNameOf(actor).c_str(), finalKey.c_str());
         }
         // Key lookup can re-enter a binder; never clear a successfully enrolled actor's
         // latch, nor publish a hand view or a mirror that appeared during that call.

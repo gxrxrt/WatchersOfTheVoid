@@ -35,6 +35,7 @@
 #include "ue_wrap/core/sdk_profile.h"
 
 #include <string>
+#include <vector>
 
 namespace coop::prop_lifecycle {
 
@@ -67,6 +68,22 @@ HandView NoteHandViewPost(void* actor) {
     return HandView::No;
 }
 }  // namespace
+
+// Keyed client destroys held through a mid-session reconcile window (DestroySeamBody), judged when
+// it lowers (TickHeldDestroys). Game thread.
+struct HeldDestroy { std::wstring key; coop::element::ElementId eid; };
+std::vector<HeldDestroy> g_heldDestroys;
+constexpr size_t kMaxHeldDestroys = 256;
+
+void HoldDestroy(const std::wstring& key, coop::element::ElementId eid) {
+    if (g_heldDestroys.size() >= kMaxHeldDestroys) {
+        UE_LOGW("grab_hook[destroy-seam]: held-destroy list full -- key '%ls' not held", key.c_str());
+        return;
+    }
+    g_heldDestroys.push_back({key, eid});
+    UE_LOGI("grab_hook[destroy-seam]: CLIENT held KEYED DESTROY key='%ls' -- judged when the reconcile "
+            "window lowers", key.c_str());
+}
 
 ue_wrap::script_gate::Verdict OnK2DestroyPre(void* context, void* /*srcObj*/, const uint8_t* /*parms*/) {
     using ue_wrap::script_gate::Verdict;
@@ -154,6 +171,14 @@ void DestroySeamBody(void* self, HandView handView) {
     if (s->role() == coop::net::Role::Client &&
         (inLoadEpisode || coop::world_load_episode::InReconcileWindow())) {
         const bool newSegment = !inLoadEpisode;
+        if (newSegment && !keyless && !coop::world_load_episode::ReconcileWindowIsLoadKind()) {
+            // A mid-session bracket: the player is playing, so a keyed destroy here may be a real
+            // pickup, not churn. Held, not dropped: when the window lowers, a key no live actor
+            // carries any more was a genuine destroy and is sent then; one the bracket re-created
+            // was churn. Dropping it left the host's copy behind -- the pickup duplicated.
+            HoldDestroy(keyStr, destroyEid);
+            return;
+        }
         if (newSegment && !keyless) {
             static uint32_t sWarned = 0;
             ++sWarned;
@@ -245,6 +270,25 @@ void DestroySeamBody(void* self, HandView handView) {
     // world-load episode, so join churn never parks.
     if (!keyless && s->role() == coop::net::Role::Client) {
         coop::prop_drop_intent::NoteClientKeyedDestroy(keyStr);
+    }
+}
+
+void TickHeldDestroys() {
+    if (g_heldDestroys.empty()) return;
+    if (coop::world_load_episode::InEpisode() || coop::world_load_episode::InReconcileWindow()) return;
+    auto* s = LoadSession();
+    std::vector<HeldDestroy> held;
+    held.swap(g_heldDestroys);
+    if (!s || !s->connected() || s->role() != coop::net::Role::Client) return;
+    for (const HeldDestroy& h : held) {
+        if (PT::FindLiveActorByKey(h.key)) continue;  // the bracket re-created it: churn, not a pickup
+        coop::net::PropDestroyPayload dp{};
+        for (size_t i = 0; i < h.key.size() && i < 31; ++i) dp.key.data[dp.key.len++] = static_cast<char>(h.key[i]);
+        dp.elementId = (h.eid == coop::element::kInvalidId) ? 0u : h.eid;
+        s->SendPropDestroy(dp);
+        coop::prop_drop_intent::NoteClientKeyedDestroy(h.key);
+        UE_LOGI("grab_hook[destroy-seam]: CLIENT sent held KEYED DESTROY key='%ls' -- gone after the window",
+                h.key.c_str());
     }
 }
 

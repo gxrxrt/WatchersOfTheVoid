@@ -45,4 +45,7 @@ void RevealConfirmedAtLift();
 // nothing can stay stuck hidden (a swept ghost is dead -> liveness-gated, skipped).
 void RevealAllSurvivorsAtQuiescence();
 
+// Per tick: the backstop that closes the window if the quiescence reveal never comes after the lift.
+void Tick();
+
 }  // namespace coop::mirror_defer

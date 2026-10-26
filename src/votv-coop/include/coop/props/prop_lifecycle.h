@@ -74,6 +74,10 @@ bool IsPerPlayerPropClass(const std::wstring& cls);
 // (remote_prop_spawn deferred divergence sweep). Game-thread only.
 void DestroyLocalProp(void* actor, bool deferred);
 
+// CLIENT, per tick: send the keyed destroys held through a mid-session reconcile window once it has
+// lowered, for each key no live actor carries any more (a genuine pickup, not bracket churn).
+void TickHeldDestroys();
+
 // Express a freshly-spawned KEYED prop on the wire -- the SAME canonical keyed
 // broadcast as the Aprop_C::Init POST observer (filters + HasProcessedInit
 // dedupe + keyed PropSpawn payload + send + self-claim), callable from a

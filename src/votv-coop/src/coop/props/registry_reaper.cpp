@@ -89,6 +89,13 @@ bool Tick(coop::net::Session& session) {
         // double snapshot and duplicate kerfurs).
         void* const world = ue_wrap::world_identity::CurrentWorld();
         const bool inGameplayWorld = (kind == ue_wrap::world_identity::WorldKind::Gameplay);
+        // Whether this scan is in the same gameplay world as the last one. A mass vanish with no
+        // world change is gameplay (a cremator load, a blast, a big cleanup), not a level purge: its
+        // destroys must reach the clients like any steady-state vanish, or they keep ghost copies.
+        static uint32_t s_lastGameplayGen = 0;
+        const uint32_t worldGen = ue_wrap::world_identity::Generation();
+        const bool sameWorld = inGameplayWorld && s_lastGameplayGen != 0 && worldGen == s_lastGameplayGen;
+        if (inGameplayWorld) s_lastGameplayGen = worldGen;
         // Published: computed here and never published, the re-seed gate read a false value for the
         // process's life, the scan-hub consumer dropped every candidate it collected on both peers,
         // the host's key index held a few dozen keyed props against thousands, every coin-gun sale
@@ -180,8 +187,13 @@ bool Tick(coop::net::Session& session) {
         // a logged no-op. This assumes one persistent gameplay world with no in-gameplay sublevel
         // streaming: a partial cave unload under this gate would destroy the unloaded sublevel's
         // props on a peer still in it.
+        const bool massInSameWorld = reaped >= kReseedPurge && sameWorld &&
+                                     !coop::prop_element_tracker::InPurgeEpisode();
+        if (massInSameWorld)
+            UE_LOGI("net_pump: %zu props vanished in one scan with no world change -- sent as destroys, "
+                    "not treated as a level purge", reaped);
         if (session.role() == coop::net::Role::Host && reaped > 0 &&
-            reaped < kReseedPurge && !coop::prop_element_tracker::InPurgeEpisode()) {
+            (reaped < kReseedPurge || massInSameWorld) && !coop::prop_element_tracker::InPurgeEpisode()) {
             int sent = 0;
             for (coop::element::ElementId eid : reapedEids) {
                 if (eid == coop::element::kInvalidId || eid == 0) continue;
@@ -216,7 +228,7 @@ bool Tick(coop::net::Session& session) {
         auto maybeReAnnounce = [&session, world]() {
             coop::net_pump::MaybeRequestReAnnounce(session, world);
         };
-        if (reaped >= kReseedPurge) {
+        if (reaped >= kReseedPurge && !massInSameWorld) {
             if (!coop::prop_element_tracker::InPurgeEpisode()) {
                 coop::prop_element_tracker::SetInPurgeEpisode(true);
                 UE_LOGI("net_pump: mass-purge detected (reaped %zu >= %zu) -- world-change re-seed deferred to drain-complete",

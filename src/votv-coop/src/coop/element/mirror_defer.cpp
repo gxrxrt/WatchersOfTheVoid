@@ -8,6 +8,7 @@
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/reflection.h"      // InternalIndexOf + IsLiveByIndex
 
+#include <chrono>
 #include <cstdint>
 #include <unordered_map>
 #include <unordered_set>
@@ -34,6 +35,13 @@ std::unordered_map<uint32_t, HiddenRec> g_hidden;
 // is: do not re-hide on the idempotent re-spawn return, for any mirror kind.
 std::unordered_set<uint32_t> g_revealed;
 bool g_armed = false;
+// After the lift the assembled world is on screen and the player is playing: a host prop born then
+// is shown at once (only a mirror whose local twin is still visible waits for quiescence), and the
+// window closes on its own if the quiescence reveal never comes (a superseded sweep pass returns
+// before it). A new host prop hidden for up to two minutes read as "invisible until touched".
+bool g_lifted = false;
+std::chrono::steady_clock::time_point g_liftedAt{};
+constexpr auto kLiftBackstop = std::chrono::seconds(20);
 
 // Reveal one record: Show + (if we disabled it) restore collision. Liveness-gated -- a record
 // whose actor was destroyed by the quiescence sweep (a ghost) is simply dropped, never touched.
@@ -52,6 +60,7 @@ void Arm() {
     // so a full teardown's dead actors are a harmless no-op. Same reveal-then-clear discipline as Reset().
     for (auto& kv : g_hidden) RevealRec(kv.second);
     g_armed = true;
+    g_lifted = false;
     g_hidden.clear();
     g_revealed.clear();
     UE_LOGI("mirror_defer: ARMED -- join deferred-hide window open (new host mirrors spawn hidden "
@@ -64,6 +73,7 @@ void Reset() {
     // dead -> liveness-gated reveal is a harmless no-op), then drop all tracking + disarm.
     for (auto& kv : g_hidden) RevealRec(kv.second);
     g_armed = false;
+    g_lifted = false;
     g_hidden.clear();
     g_revealed.clear();
 }
@@ -72,6 +82,7 @@ void OnMirrorSpawned(uint32_t eid, void* actor, bool collisionOff, bool holdUnti
     UE_ASSERT_GAME_THREAD("mirror_defer::OnMirrorSpawned");
     if (!g_armed || !actor || eid == 0u) return;
     if (g_revealed.count(eid)) return;  // already shown this join -> never re-hide (idempotent re-spawn)
+    if (g_lifted && !holdUntilQuiescence) return;  // the world is on screen: a new birth shows at once
     ue_wrap::engine::SetActorHiddenInGame(actor, true);
     if (collisionOff) ue_wrap::engine::SetActorEnableCollision(actor, false);
     g_hidden[eid] = HiddenRec{actor, R::InternalIndexOf(actor), collisionOff, holdUntilQuiescence};
@@ -80,6 +91,8 @@ void OnMirrorSpawned(uint32_t eid, void* actor, bool collisionOff, bool holdUnti
 void RevealConfirmedAtLift() {
     UE_ASSERT_GAME_THREAD("mirror_defer::RevealConfirmedAtLift");
     if (!g_armed) return;
+    g_lifted = true;
+    g_liftedAt = std::chrono::steady_clock::now();
     int revealed = 0;
     for (auto it = g_hidden.begin(); it != g_hidden.end();) {
         if (it->second.hold) { ++it; continue; }  // local twin still visible -> wait for quiescence
@@ -100,8 +113,16 @@ void RevealAllSurvivorsAtQuiescence() {
     for (auto& kv : g_hidden) RevealRec(kv.second);
     g_hidden.clear();
     g_armed = false;
+    g_lifted = false;
     UE_LOGI("mirror_defer: quiescence-reveal -- %d held/tail mirror(s) shown; deferred-hide window "
             "CLOSED (steady-state spawns now visible immediately)", n);
+}
+
+void Tick() {
+    if (!g_armed || !g_lifted || std::chrono::steady_clock::now() - g_liftedAt < kLiftBackstop) return;
+    UE_LOGW("mirror_defer: no quiescence reveal %llds after the lift -- revealing the %zu still hidden",
+            static_cast<long long>(kLiftBackstop.count()), g_hidden.size());
+    RevealAllSurvivorsAtQuiescence();
 }
 
 }  // namespace coop::mirror_defer
