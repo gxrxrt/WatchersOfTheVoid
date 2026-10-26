@@ -37,6 +37,7 @@
 #include "ui/admin_panel.h"
 #include "ui/world_rules_panel.h"  // F1 > World > Rules (shown to everyone)
 #include "ui/net_stats_panel.h"
+#include "ui/session_pane.h"
 #include "ui/scale.h"
 #include "ui/bug_report_pane.h"
 #include "ui/server_settings_pane.h"
@@ -579,10 +580,10 @@ const std::vector<Cat>& Tree() {
             { "Events",   { { &ui::dev_panes::RenderEvents, true } }, true },
         }, true },
         { L10N_MARK("Network"), {
-            // Stats is for EVERYONE (the overlay toggle + live session readout);
-            // Session stays a dev placeholder, hidden for regular players.
+            // Stats and Session are for EVERYONE: the live readout, and the invite, quick
+            // connect and the host's resync (ui/session_pane).
             { L10N_MARK("Stats"),    { { &RenderNetStats, false } }, false },
-            { "Session",  {}, true },
+            { L10N_MARK("Session"),  { { &ui::session_pane::Render, false } }, false },
         }, false },
         { L10N_MARK("Administration"), {
             // HOST-role-gated (not dev): online/offline/banned player admin.

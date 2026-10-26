@@ -720,6 +720,7 @@ set(VOTVCOOP_SOURCES
     src/ui/console.cpp
     src/ui/hud.cpp
     src/ui/net_stats_panel.cpp
+    src/ui/session_pane.cpp
     src/ui/chat_input.cpp
     src/ui/chat_view.cpp
     src/coop/text/novelty_ledger.cpp
