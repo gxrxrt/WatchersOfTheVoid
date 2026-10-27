@@ -60,6 +60,15 @@ struct Motion { ue_wrap::CachedObjRef actor; float x=0,y=0; };
 std::unordered_map<std::wstring,Motion> g_motion;
 struct Owner { ue_wrap::CachedObjRef actor; uint16_t playerNo=0; uint64_t until=0; };
 std::unordered_map<std::wstring,Owner> g_doorOwners;
+// The heavy cremator door is dragged with the player's own physics handle once its open() frees the
+// hinge, and its close() latches it at the stop. A client drags its own copy natively and streams the
+// door's pose while it holds it; the host follows that pose and relays it; the client ignores the
+// host's pose for that door meanwhile. g_heldDoor is the client's held door, g_heldUntil the tail
+// after the release during which the host's echo of an older pose is still ignored.
+ue_wrap::CachedObjRef g_heldDoor;
+uint64_t g_heldUntil=0, g_heldNextSend=0;
+struct DoorLease { ue_wrap::CachedObjRef actor; uint8_t slot=0; uint64_t until=0; };
+std::unordered_map<std::wstring,DoorLease> g_doorLeases;
 struct GrillOp {ue_wrap::CachedObjRef actor;net::KitchenIntentPayload p{};uint64_t until=0,retryAt=0,serial=0;uint8_t slot=0;uint16_t playerNo=0;};
 std::unordered_map<std::wstring,GrillOp> g_grillOps;
 std::unordered_map<std::wstring,GrillOp> g_grillLast;
@@ -453,12 +462,15 @@ sg::Verdict OnDoor(const sg::Call& c) {
     // that close undid every open on the host (seen in play: an open and a close per grab, the
     // door snapping back). The host's own hinge closes the door when the drag brings it home.
     // Scoped to the cremator, the reported door; the appliances keep their forwarded close.
-    if (c.tag==0x4B540007 && (K::Type(parent)==K::Kind::Cremator ||
+    const bool holding=g_heldDoor.Get()==parent;
+    if (c.tag==0x4B540007 && !holding && (K::Type(parent)==K::Kind::Cremator ||
                               K::DoorUser(parent)!=players::Registry::Get().Local())) return sg::Verdict::Cancel;
     net::KitchenIntentPayload p{};
     Identity(parent,p.key,p.elementId); p.op=c.tag==0x4B540006 ? 2 : 3;
     if (p.key.len || p.elementId) g_session.load()->SendReliable(net::ReliableKind::KitchenIntent,&p,sizeof(p));
-    return sg::Verdict::Cancel;
+    // The door this client drags: its own open() frees the hinge for its own hand and its own close()
+    // latches it, natively; both also go to the host, which follows the streamed pose.
+    return holding ? sg::Verdict::Run : sg::Verdict::Cancel;
 }
 // The hinge drag path, said on every edge a two-player run needs to locate a stuck door: whether a
 // client's grab named it the door's player, whether its mouse motion was caught and sent, and on the
@@ -476,8 +488,37 @@ void AfterDoorGrab(const sg::Call& c) {
     void* parent=K::DoorParent(c.object);
     if (!parent) return;
     void* local=players::Registry::Get().Local();
+    const bool mine=K::DoorUser(parent)==local;
+    if (mine && K::Type(parent)==K::Kind::Cremator) {
+        g_heldDoor.Set(parent); g_heldNextSend=0;
+        UE_LOGI("kitchen: cremator door held here -- its pose streams to the host while held");
+    }
     UE_LOGI("kitchen: door grab on kind %u -- its player is %s",static_cast<unsigned>(K::Type(parent)),
-            K::DoorUser(parent)==local ? "this peer (motion goes to the host)" : "NOT this peer (motion stays local)");
+            mine ? "this peer" : "NOT this peer");
+}
+void SendHeldDoorPose(bool holding) {
+    auto* s=g_session.load();
+    void* door=g_heldDoor.Get();
+    if (!s || !door) return;
+    K::State st{};
+    if (!K::Read(door,st) || !st.hasDoorPose) return;
+    net::KitchenDoorPosePayload p{};
+    Identity(door,p.key,p.elementId);
+    if (!p.key.len && !p.elementId) return;
+    const auto& t=st.doorPose;
+    const float v[]={t.RotX,t.RotY,t.RotZ,t.RotW,t.TX,t.TY,t.TZ,t.SX,t.SY,t.SZ};
+    for (int i=0;i<10;++i) p.pose[i]=v[i];
+    p.holding=holding ? 1 : 0;
+    s->SendReliable(net::ReliableKind::KitchenDoorPose,&p,sizeof(p));
+}
+void AfterDoorDropped(const sg::Call& c) {
+    if (!Client() || !c.object) return;
+    void* parent=K::DoorParent(c.object);
+    if (!parent || g_heldDoor.Get()!=parent) return;
+    SendHeldDoorPose(false);
+    g_heldDoor.Set(nullptr);
+    g_heldUntil=Now()+600;
+    UE_LOGI("kitchen: cremator door released here -- the host leads it again");
 }
 sg::Verdict OnMouse(const sg::Call& c) {
     if (!Client() || c.fromOurCode) return sg::Verdict::Run;
@@ -523,6 +564,7 @@ void Install(net::Session* session) {
     sg::WatchName(L"Close",0x4B540007,&OnDoor,nullptr);
     sg::WatchClassName(L"prop_swinger_C",L"mouseAssign",0x4B540008,&OnMouse,nullptr);
     sg::WatchClassName(L"prop_swinger_C",L"playerGrabbed",0x4B54000F,nullptr,&AfterDoorGrab);
+    sg::WatchClassName(L"prop_swinger_C",L"dropped",0x4B540010,nullptr,&AfterDoorDropped);
     sg::WatchClassName(L"prop_bbq_C",L"ReceiveTick",0x4B540009,&OnProducer,nullptr);
     sg::WatchClassName(L"prop_bbq_C",L"attemptIgnite",0x4B54000A,&OnGrillIgnite,&AfterGrillChange);
     sg::WatchClassName(L"prop_bbq_C",L"addCoal",0x4B54000B,&OnGrillCoal,&AfterGrillChange);
@@ -549,6 +591,7 @@ void Tick() {
     const auto actors=g_actors;
     const uint64_t now=Now();
     if (Client()) {
+        if (g_heldDoor.Get() && now>=g_heldNextSend) { g_heldNextSend=now+50; SendHeldDoorPose(true); }
         const float seconds=g_animationAt ? static_cast<float>(now-g_animationAt)/1000.f : 0.f;
         g_animationAt=now;
         for (const auto& r:actors) if (void* a=r.Get()) {
@@ -618,8 +661,38 @@ void Apply(const net::KitchenStatePayload& p) {
     if (!Client() || !Valid(p)) return;
     ResetWorld();
     const auto id=Token(p.key,p.elementId);
+    if (p.kind==6) {
+        // The door this client drags (or just released) is its own: the host's pose of it is the
+        // echo of an older frame.
+        void* held=g_heldDoor.Get();
+        net::WireKey hk{}; uint32_t he=0;
+        if (held) Identity(held,hk,he);
+        if ((held && Token(hk,he)==id) || (!held && Now()<g_heldUntil)) return;
+    }
     if (g_pending.size()>=256 && !g_pending.count(id)) return;
     g_pending[id]={p,++g_revision}; PaintAndRemember(id,true);
+}
+void OnDoorPose(const net::KitchenDoorPosePayload& p,uint8_t senderSlot) {
+    auto* s=g_session.load();
+    if (!s || !s->connected() || Client() || p.key.len>sizeof(p.key.data) || p.holding>1) return;
+    for (float v:p.pose) if (!std::isfinite(v)) return;
+    void* a=Resolve(p.key,p.elementId);
+    if (!a || K::Type(a)!=K::Kind::Cremator) return;
+    auto target=element::IntentTarget::ForClientIntent(*s,senderSlot,500.f);
+    if (!target.Authorize(a)) return;
+    const auto id=Token(p.key,p.elementId);
+    auto& lease=g_doorLeases[id];
+    const uint64_t now=Now();
+    if (lease.actor.Get()==a && lease.slot!=senderSlot && now<lease.until) return;  // another player drags it
+    if (lease.actor.Get()!=a || now>=lease.until)
+        UE_LOGI("kitchen: peer %u drags the cremator door -- the host follows its pose",senderSlot);
+    lease.actor.Set(a); lease.slot=senderSlot; lease.until=p.holding ? now+500 : 0;
+    ue_wrap::FTransform t{};
+    t.RotX=p.pose[0]; t.RotY=p.pose[1]; t.RotZ=p.pose[2]; t.RotW=p.pose[3];
+    t.TX=p.pose[4]; t.TY=p.pose[5]; t.TZ=p.pose[6]; t.SX=p.pose[7]; t.SY=p.pose[8]; t.SZ=p.pose[9];
+    // The pose comes from the client's own hinge, so it lies on this door's hinge arc; the host's
+    // constraint stays, and the pose stream carries the door on to the other peers.
+    K::ApplyDoorPose(a,t);
 }
 void OnIntent(const net::KitchenIntentPayload& p,uint8_t senderSlot) {
     auto* s=g_session.load();
@@ -708,6 +781,7 @@ void OnDisconnect() {
     g_applied.clear(); g_retryAt.clear();
     g_next=g_animationAt=g_recoveryAt=0; g_world=0;
     g_motion.clear(); g_doorOwners.clear();
+    g_heldDoor.Set(nullptr); g_heldUntil=g_heldNextSend=0; g_doorLeases.clear();
     g_joins.clear();g_joinCursor.clear();
     for(auto& person:g_joinPeople)person=0;
     g_grillOps.clear();g_grillLast.clear();g_grillSaves.clear();++g_grillSerial;

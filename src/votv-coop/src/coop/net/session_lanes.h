@@ -250,6 +250,8 @@ inline Lane LaneForKind(ReliableKind k) {
     // A press names its target by portable identity and carries everything its replay needs; ordered
     // against nothing. The default, by decision.
     case ReliableKind::InteractForward:   return Lane::Normal;
+    // Ordered with KitchenIntent (the drag's open and close), the same lane.
+    case ReliableKind::KitchenDoorPose:   return Lane::Normal;
     // The precision family is ordered against itself and one other kind: a joiner's seed and every
     // later batch are one kind, an intent is performed by dish index, and the host hears an intent
     // only from a slot whose ClientWorldReady it has applied (dish_calib_sync), so that announce

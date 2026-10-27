@@ -305,6 +305,14 @@ bool HandleWorldEvent(net::Session& session,
         coop::kitchen_sync::Apply(p);
         break;
     }
+    case net::ReliableKind::KitchenDoorPose: {
+        if (msg.payloadLen != sizeof(net::KitchenDoorPosePayload) ||
+            session.role() != net::Role::Host || msg.senderPeerSlot <= 0 || msg.senderPeerSlot >= net::kMaxPeers) break;
+        net::KitchenDoorPosePayload p{};
+        std::memcpy(&p,msg.payload,sizeof(p));
+        coop::kitchen_sync::OnDoorPose(p,static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
     case net::ReliableKind::KitchenIntent: {
         if (msg.payloadLen != sizeof(net::KitchenIntentPayload) ||
             session.role() != net::Role::Host || msg.senderPeerSlot <= 0 || msg.senderPeerSlot >= net::kMaxPeers) break;

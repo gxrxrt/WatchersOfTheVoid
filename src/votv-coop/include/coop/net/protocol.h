@@ -32,7 +32,7 @@ inline constexpr uint32_t kMagic = 0x564D5450u;
 // This file is past the 1500-line hard cap and stays there: it is the single-feature exception the
 // rule names. One wire format, whose enum, payload structs and static_asserts are read together;
 // splitting it would put a kind's number in one file and its bytes in another.
-inline constexpr uint16_t kProtocolVersion = 2902;  // coop-stability fork of 2215: drone drop-sack verb (far from upstream numbers so the two never handshake)
+inline constexpr uint16_t kProtocolVersion = 2903;  // coop-stability fork of 2215: drone drop-sack verb (far from upstream numbers so the two never handshake)
 
 // Default LAN port (overridable via multivoid.ini "net.port=").
 inline constexpr uint16_t kDefaultPort = 47621;
@@ -1096,6 +1096,9 @@ enum class ReliableKind : uint8_t {
     // interaction lane covers (coop/interactables/interact_forward), replayed with the presser's
     // puppet as the player. InteractForwardPayload.
     InteractForward = 253,
+    // Client to host: the pose of a hinged machine door the client is dragging (the cremator's heavy
+    // door), while it holds it. KitchenDoorPosePayload.
+    KitchenDoorPose = 254,
 };
 
 #pragma pack(push, 1)
@@ -2064,6 +2067,16 @@ struct KitchenIntentPayload {
     float mouseX, mouseY; // op 4, bounded accumulated native mouse deltas
 };
 static_assert(sizeof(KitchenIntentPayload) == 47, "Kitchen intent wire layout");
+// A dragged door's pose relative to its machine (the same quaternion, translation, scale layout as
+// KitchenStatePayload::doorPose), streamed by the dragging client; holding 0 is the release.
+struct KitchenDoorPosePayload {
+    WireKey key;
+    uint32_t elementId;
+    float pose[10];
+    uint8_t holding;
+    uint8_t _pad[3];
+};
+static_assert(sizeof(KitchenDoorPosePayload) == 80, "Kitchen door pose wire layout");
 struct CordEndpoint {
     WireKey key;
     uint32_t elementId;
