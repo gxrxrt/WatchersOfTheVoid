@@ -123,7 +123,12 @@ void SendOutbound(coop::net::Session* s) {
     void* local = coop::players::Registry::Get().Local();
     // A held sponge, or a held pressure washer: its water hits the window, which cleans itself with
     // no sponge in the loop (seen in play: the host's washed window stayed dirty on the client).
-    if (!WC::ReadHeldBrush(local, size, opac, col) && !WC::ReadWasherBrush(local, size, opac, col)) {
+    // The host owns the window: a dab it drew with no local brush (a peer's washer water, mirrored onto
+    // the host, landing on its window) is still the window's truth, so the host sends it with the
+    // default brush -- to every peer, the washer's owner included, whose own copy saw no water.
+    const bool host = s->role() == coop::net::Role::Host;
+    if (!WC::ReadHeldBrush(local, size, opac, col) && !WC::ReadWasherBrush(local, size, opac, col) &&
+        !(host && WC::ReadDefaultBrush(size, opac, col))) {
         g_unsent += g_outbound.size();  // not the local hand's sponge: a thrown sponge hit the window
         if (Verbose()) UE_LOGI("window_stroke: %zu dab(s) without a held sponge -- not sent", g_outbound.size());
         g_outbound.clear();

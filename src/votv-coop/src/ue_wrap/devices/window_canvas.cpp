@@ -245,6 +245,11 @@ bool ReadWasherBrush(void* mainPlayer, float& size, float& opac, float& col) {
     if (g_offHolding < 0 || g_offSize < 0) return false;
     void* held = ReadField<void*>(mainPlayer, g_offHolding);
     if (!held || !R::IsLive(held) || !pressure_washer::IsWasher(held)) return false;
+    return ReadDefaultBrush(size, opac, col);
+}
+
+bool ReadDefaultBrush(float& size, float& opac, float& col) {
+    if (!EnsureSponge() || g_offSize < 0) return false;
     void* cdo = R::FindClassDefaultObject(L"prop_sponge_C");
     if (!cdo) return false;
     size = ReadField<float>(cdo, g_offSize);

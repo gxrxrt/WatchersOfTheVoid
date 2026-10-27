@@ -49,6 +49,10 @@ bool ReadHeldBrush(void* mainPlayer, float& size, float& opac, float& col);
 // 0.4 x strength opacity). False when the player holds no washer. Game thread.
 bool ReadWasherBrush(void* mainPlayer, float& size, float& opac, float& col);
 
+// The sponge's class-default brush, for a dab no local hand painted (a peer's washer water landing on
+// the host's window). False when the sponge class is not loaded. Game thread.
+bool ReadDefaultBrush(float& size, float& opac, float& col);
+
 // Signal playback owns the world's render-target canvas; the window refuses to draw meanwhile.
 bool IsSignalPlaying();
 
