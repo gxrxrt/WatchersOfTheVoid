@@ -17,7 +17,6 @@
 #include "coop/props/remote_prop.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/prop.h"
-#include "ue_wrap/actors/swinger.h"  // TryReadOpen: the cremator door toggle
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -461,11 +460,35 @@ sg::Verdict OnDoor(const sg::Call& c) {
     if (p.key.len || p.elementId) g_session.load()->SendReliable(net::ReliableKind::KitchenIntent,&p,sizeof(p));
     return sg::Verdict::Cancel;
 }
+// The hinge drag path, said on every edge a two-player run needs to locate a stuck door: whether a
+// client's grab named it the door's player, whether its mouse motion was caught and sent, and on the
+// host what became of each motion. Rate-limited per message kind.
+bool DoorSay(int kind) {
+    static uint64_t s_at[8] = {};
+    static uint32_t s_n[8] = {};
+    const uint64_t now = Now();
+    ++s_n[kind];
+    if (s_n[kind] <= 5 || now - s_at[kind] >= 2000) { s_at[kind] = now; return true; }
+    return false;
+}
+void AfterDoorGrab(const sg::Call& c) {
+    if (!Client() || !c.object) return;
+    void* parent=K::DoorParent(c.object);
+    if (!parent) return;
+    void* local=players::Registry::Get().Local();
+    UE_LOGI("kitchen: door grab on kind %u -- its player is %s",static_cast<unsigned>(K::Type(parent)),
+            K::DoorUser(parent)==local ? "this peer (motion goes to the host)" : "NOT this peer (motion stays local)");
+}
 sg::Verdict OnMouse(const sg::Call& c) {
     if (!Client() || c.fromOurCode) return sg::Verdict::Run;
     void* parent=K::DoorParent(c.object);
     if (!parent || !net_pump::IsInAnnouncedWorld(parent) ||
-        K::DoorUser(parent)!=players::Registry::Get().Local()) return sg::Verdict::Run;
+        K::DoorUser(parent)!=players::Registry::Get().Local()) {
+        if (parent && DoorSay(0))
+            UE_LOGI("kitchen: hinge motion on kind %u runs locally -- the door's player is not this peer",
+                    static_cast<unsigned>(K::Type(parent)));
+        return sg::Verdict::Run;
+    }
     static R::ParamOffset mouse{L"mouseXY"};
     const int off=mouse.Of(c.function);
     if (!c.locals || off<0) return sg::Verdict::Cancel;
@@ -480,37 +503,6 @@ sg::Verdict OnMouse(const sg::Call& c) {
     motion.y=std::clamp(motion.y+delta.Y,-200.f,200.f);
     return sg::Verdict::Cancel;
 }
-}
-
-// The cremator door on a client: a toggle, not a drag. The door is a physics swinger the player grabs
-// with a physics handle and swings past a threshold, which is what calls its open(); on a client that
-// drag moved only its copy while the host's pose stream (every 50 ms) teleported it back, and the host
-// never saw a drag at all (seen in play: "it latches on, then a second later it springs back"). So a
-// client's grab of the cremator door is refused and becomes an open or a close on the host, whose
-// hinge drive swings the door and whose pose stream carries it to every peer.
-std::unordered_map<void*,uint64_t> g_toggleAt;
-sg::Verdict OnDoorGrab(const sg::Call& c) {
-    if (!Client() || c.fromOurCode || !c.object) return sg::Verdict::Run;
-    void* parent=K::DoorParent(c.object);
-    if (!parent || K::Type(parent)!=K::Kind::Cremator || !net_pump::IsInAnnouncedWorld(parent)) return sg::Verdict::Run;
-    static R::ParamOffset playerOff{L"player"};
-    const int32_t off=playerOff.Of(c.function);
-    void* who=nullptr;
-    if (c.locals && off>=0) std::memcpy(&who,c.locals+off,sizeof(who));
-    if (who!=players::Registry::Get().Local()) return sg::Verdict::Run;
-    const uint64_t now=Now();
-    uint64_t& last=g_toggleAt[parent];
-    if (now-last<500) return sg::Verdict::Cancel;  // one press, not the held key's repeats
-    last=now;
-    bool opened=false;
-    ue_wrap::swinger::TryReadOpen(c.object,opened);
-    net::KitchenIntentPayload p{};
-    Identity(parent,p.key,p.elementId); p.op=opened ? 3 : 2;
-    if (p.key.len || p.elementId) {
-        g_session.load()->SendReliable(net::ReliableKind::KitchenIntent,&p,sizeof(p));
-        UE_LOGI("kitchen: cremator door %s asked of the host (a grab here is a toggle)",opened?"close":"open");
-    }
-    return sg::Verdict::Cancel;
 }
 
 void Install(net::Session* session) {
@@ -530,7 +522,7 @@ void Install(net::Session* session) {
     sg::WatchName(L"Open",0x4B540006,&OnDoor,nullptr);
     sg::WatchName(L"Close",0x4B540007,&OnDoor,nullptr);
     sg::WatchClassName(L"prop_swinger_C",L"mouseAssign",0x4B540008,&OnMouse,nullptr);
-    sg::WatchClassName(L"prop_swinger_C",L"playerGrabbed",0x4B54000F,&OnDoorGrab,nullptr);
+    sg::WatchClassName(L"prop_swinger_C",L"playerGrabbed",0x4B54000F,nullptr,&AfterDoorGrab);
     sg::WatchClassName(L"prop_bbq_C",L"ReceiveTick",0x4B540009,&OnProducer,nullptr);
     sg::WatchClassName(L"prop_bbq_C",L"attemptIgnite",0x4B54000A,&OnGrillIgnite,&AfterGrillChange);
     sg::WatchClassName(L"prop_bbq_C",L"addCoal",0x4B54000B,&OnGrillCoal,&AfterGrillChange);
@@ -576,6 +568,8 @@ void Tick() {
             g_motion.erase(it);
             if (p.mouseX==0 && p.mouseY==0)continue;
             const bool sent=s->SendReliable(net::ReliableKind::KitchenIntent,&p,sizeof(p));
+            if (DoorSay(1))
+                UE_LOGI("kitchen: hinge motion (%.1f, %.1f) %s to the host",p.mouseX,p.mouseY,sent?"sent":"NOT sent");
             if(!Current(s,epoch))return;
             if(!sent && motion.actor.Get()) {
                 auto found=g_motion.find(id);
@@ -637,7 +631,10 @@ void OnIntent(const net::KitchenIntentPayload& p,uint8_t senderSlot) {
     if (!a) return;
     if (K::Type(a)==K::Kind::Cremator && p.op==1) return; // lever uses DoorVerbIntent
     auto target=element::IntentTarget::ForClientIntent(*s,senderSlot,500.f);
-    if (!target.Authorize(a)) return;
+    if (!target.Authorize(a)) {
+        if (p.op==4 && DoorSay(2)) UE_LOGI("kitchen: peer %u hinge motion refused -- out of reach",senderSlot);
+        return;
+    }
     if(p.op>=5) {
         if(!Grill(a)||p.action||p.control||p.mouseX!=0||p.mouseY!=0)return;
         QueueGrill(a,p.op,senderSlot);return;
@@ -647,14 +644,20 @@ void OnIntent(const net::KitchenIntentPayload& p,uint8_t senderSlot) {
         if (g_intentAt[senderSlot] && now-g_intentAt[senderSlot]<150) return;
         g_intentAt[senderSlot]=now;
     } else {
-        // A drag yields to the host's own hand; an open or close (the cremator toggle) does not: the
-        // door's player field can outlive the host's release.
-        if (!K::OwnsDoor(a) || (p.op==4 && K::DoorUser(a)==players::Registry::Get().Local())) return;
+        if (!K::OwnsDoor(a) || K::DoorUser(a)==players::Registry::Get().Local()) {
+            if (p.op==4 && DoorSay(3))
+                UE_LOGI("kitchen: peer %u hinge motion refused -- %s",senderSlot,
+                        K::OwnsDoor(a) ? "the host holds this door" : "no door");
+            return;
+        }
         const auto playerNo=roster_ledger::Get(senderSlot).playerNo;
         if (!playerNo) return;
         net::WireKey key{}; uint32_t eid=0; Identity(a,key,eid);
         auto& owner=g_doorOwners[Token(key,eid)];
-        if (owner.actor.Get()==a && now<owner.until && owner.playerNo!=playerNo) return;
+        if (owner.actor.Get()==a && now<owner.until && owner.playerNo!=playerNo) {
+            if (p.op==4 && DoorSay(4)) UE_LOGI("kitchen: peer %u hinge motion refused -- another player drags it",senderSlot);
+            return;
+        }
         owner.actor.Set(a); owner.playerNo=playerNo; owner.until=now+400;
     }
     bool ok=false;
@@ -665,6 +668,9 @@ void OnIntent(const net::KitchenIntentPayload& p,uint8_t senderSlot) {
     } else if (p.op==4) {
         auto* puppet=players::Registry::Get().Puppet(senderSlot);
         ok=K::MoveDoor(a,puppet ? puppet->GetActor() : nullptr,{p.mouseX,p.mouseY});
+        if (DoorSay(5))
+            UE_LOGI("kitchen: peer %u hinge motion (%.1f, %.1f) %s",senderSlot,p.mouseX,p.mouseY,
+                    ok ? "driven on the host" : (puppet ? "NOT driven (mouseAssign failed)" : "NOT driven (no puppet)"));
     } else ok=K::SetDoor(a,p.op==2);
     if (p.op!=4) {
         UE_LOGI("kitchen: peer %u op=%u action=%u control=%u applied=%d",senderSlot,p.op,p.action,p.control,ok);
