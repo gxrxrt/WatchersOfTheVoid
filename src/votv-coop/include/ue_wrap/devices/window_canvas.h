@@ -44,6 +44,11 @@ bool ReadStrokeCorner(void* window, float& x, float& y);
 // no sponge. Game thread (reads the material parameters through UFunctions).
 bool ReadHeldBrush(void* mainPlayer, float& size, float& opac, float& col);
 
+// The brush a held pressure washer's water paints with. Its drops hit the window and the window
+// cleans itself with no sponge in the loop, so the brush is the sponge's class default (size, and the
+// 0.4 x strength opacity). False when the player holds no washer. Game thread.
+bool ReadWasherBrush(void* mainPlayer, float& size, float& opac, float& col);
+
 // Signal playback owns the world's render-target canvas; the window refuses to draw meanwhile.
 bool IsSignalPlaying();
 

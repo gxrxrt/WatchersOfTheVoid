@@ -120,7 +120,10 @@ void OnDrawPost(void* /*canvas*/, void* sourceObject, void* /*result*/) {
 void SendOutbound(coop::net::Session* s) {
     if (g_outbound.empty()) return;
     float size = 0.f, opac = 0.f, col = 0.f;
-    if (!WC::ReadHeldBrush(coop::players::Registry::Get().Local(), size, opac, col)) {
+    void* local = coop::players::Registry::Get().Local();
+    // A held sponge, or a held pressure washer: its water hits the window, which cleans itself with
+    // no sponge in the loop (seen in play: the host's washed window stayed dirty on the client).
+    if (!WC::ReadHeldBrush(local, size, opac, col) && !WC::ReadWasherBrush(local, size, opac, col)) {
         g_unsent += g_outbound.size();  // not the local hand's sponge: a thrown sponge hit the window
         if (Verbose()) UE_LOGI("window_stroke: %zu dab(s) without a held sponge -- not sent", g_outbound.size());
         g_outbound.clear();

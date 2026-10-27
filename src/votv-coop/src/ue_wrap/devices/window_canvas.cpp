@@ -3,6 +3,7 @@
 // classes; the bytecode facts this relies on are in the header.
 
 #include "ue_wrap/devices/window_canvas.h"
+#include "ue_wrap/actors/pressure_washer.h"  // IsWasher: the washer's water also cleans the window
 
 #include "ue_wrap/core/call.h"
 #include "ue_wrap/core/fname_utils.h"
@@ -233,6 +234,24 @@ bool ReadHeldBrush(void* mainPlayer, float& size, float& opac, float& col) {
     opac = 0.4f * strength * (soap > 0.f ? 2.f : 1.f);
     col = 0.f;
     return true;
+}
+
+bool ReadWasherBrush(void* mainPlayer, float& size, float& opac, float& col) {
+    if (!mainPlayer || !R::IsLive(mainPlayer) || !EnsureSponge()) return false;
+    if (g_playerCls != R::ClassOf(mainPlayer)) {
+        g_playerCls = R::ClassOf(mainPlayer);
+        g_offHolding = R::FindPropertyOffset(g_playerCls, L"holding_actor");
+    }
+    if (g_offHolding < 0 || g_offSize < 0) return false;
+    void* held = ReadField<void*>(mainPlayer, g_offHolding);
+    if (!held || !R::IsLive(held) || !pressure_washer::IsWasher(held)) return false;
+    void* cdo = R::FindClassDefaultObject(L"prop_sponge_C");
+    if (!cdo) return false;
+    size = ReadField<float>(cdo, g_offSize);
+    const float strength = g_offStrength >= 0 ? ReadField<float>(cdo, g_offStrength) : 1.5f;
+    opac = 0.4f * (strength > 0.f ? strength : 1.5f);
+    col = 0.f;
+    return size > 0.f;
 }
 
 bool IsSignalPlaying() {
