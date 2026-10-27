@@ -156,6 +156,7 @@ constexpr ExSpawnSource kExSpawnSources[] = {
     {L"grayEventController_C",   nullptr},          // graysforest: spawn() mints the grayTest_C pack
     {L"superEgger_C",            nullptr},          // eggvasion: spwn() mints the eg_C children
     {L"tentacleBallsFollower_C", nullptr},          // tentacleBalls: runTrigger() mints the pack
+    {L"slapperSummoner_C",       nullptr},          // the ariral base chest's component: mints arirSlapper_C
 };
 
 // A source's output may be a world-actor-lane class (the pyramid): the same catch seam,
