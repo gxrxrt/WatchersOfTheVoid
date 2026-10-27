@@ -182,10 +182,22 @@ bool PaintAndRemember(const std::wstring& id,bool immediate=false) {
     ue_wrap::CachedObjRef live;live.Set(actor);
     const bool ok=actor && current() && K::Apply(actor,Decode(row.state),current);
     if(!current())return false;
+    // Seen in play: a client's cremator door stayed shut while the host's swung open, with nothing
+    // in the client's log. Say the first apply of each machine and each failure streak.
+    static std::unordered_map<std::wstring,uint32_t> s_fails;
     if (!ok || !live.Get()) {
+        uint32_t& n=s_fails[id];
+        if (++n==1 || n%40==0)
+            UE_LOGW("kitchen: apply of '%ls' (kind %u flags %u) failed #%u -- %s",id.c_str(),row.state.kind,
+                    row.state.flags,n,actor ? "the machine refused the state" : "no local machine resolves");
         g_applied.erase(id);
         g_retryAt[id]=now+250;
         return false;
+    }
+    if (auto f=s_fails.find(id); f!=s_fails.end() || !g_applied.count(id)) {
+        UE_LOGI("kitchen: applied '%ls' (kind %u flags %u)%s",id.c_str(),row.state.kind,row.state.flags,
+                f!=s_fails.end() ? " after failures" : "");
+        if (f!=s_fails.end()) s_fails.erase(f);
     }
     g_retryAt.erase(id);
     g_applied[id]={live,row.revision};

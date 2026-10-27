@@ -247,7 +247,12 @@ bool Apply(void* actor, const State& s,const std::function<bool()>& current) {
     if(s.kind==Kind::Grill)return grill::Apply(actor,{bool(s.flags&Active),bool(s.flags&HasLid),s.cooking,s.coals,s.burn,s.cookVolume},current);
     if (s.kind==Kind::Cremator) {
         // Door paint only; lever/burning state has its own authoritative lane.
-        return SetDoor(actor,(s.flags&Opened)!=0) && valid() && s.hasDoorPose && ApplyDoorPose(actor,s.doorPose) && valid();
+        const bool door=SetDoor(actor,(s.flags&Opened)!=0);
+        const bool pose=door && valid() && s.hasDoorPose && ApplyDoorPose(actor,s.doorPose);
+        static int s_said=0;
+        if ((!door || !pose) && s_said++<6)
+            UE_LOGW("kitchen_machine: cremator door apply -- open/close %s, pose %s",door?"ok":"FAILED",pose?"ok":"FAILED");
+        return door && pose && valid();
     }
     auto& l = Fields(s.kind);
     State before{};
