@@ -14,6 +14,7 @@
 #include "ue_wrap/engine/engine.h"
 #include "ue_wrap/engine/engine_component.h"
 
+#include <algorithm>
 #include <array>
 #include <chrono>
 #include <string>
@@ -98,6 +99,26 @@ std::vector<Box> ClawdBoxes() {
     return out;
 }
 
+// Hide every primitive the plush draws (its skeletal body, any static part) except Clawd's cubes. Only
+// visibility: the plush's collision and physics stay, so Clawd is carried, thrown and synced as it.
+void HideAllBut(void* actor, const std::vector<void*>& keep) {
+    static void* primCls = R::FindClass(L"PrimitiveComponent");
+    void* fn = R::FindDispatchFunctionCached(R::ClassOf(actor), L"K2_GetComponentsByClass");
+    if (!primCls || !fn) return;
+    ue_wrap::ParamFrame f(fn);
+    struct Arr { void** data; int32_t num, max; } arr{};
+    if (!f.valid() || !f.Set<void*>(L"ComponentClass", primCls) || !ue_wrap::Call(actor, f) ||
+        !f.GetRaw(L"ReturnValue", &arr, sizeof(arr)) || !arr.data || arr.num <= 0 || arr.num > 256) return;
+    int hidden = 0;
+    for (int32_t i = 0; i < arr.num; ++i) {
+        void* c = arr.data[i];
+        if (!c || !R::IsLive(c) || std::find(keep.begin(), keep.end(), c) != keep.end()) continue;
+        E::SetComponentVisible(c, false, /*propagate=*/false);
+        ++hidden;
+    }
+    UE_LOGI("claude_figurine: plush hidden (%d part(s)), Clawd drawn from %zu cube(s)", hidden, keep.size());
+}
+
 // Build Clawd on the plush: its own mesh is hidden (its collision and physics stay, so he is carried,
 // thrown and synced like any prop) and the cubes ride its root. False when the engine shapes did not
 // load or no cube attached.
@@ -108,6 +129,7 @@ bool BuildClawd(void* actor) {
     void* add = R::FindDispatchFunctionCached(R::ClassOf(actor), L"AddComponentByClass");
     if (!cube || !material || !smc || !add) return false;
     int built = 0;
+    std::vector<void*> cubes;
     for (const Box& b : ClawdBoxes()) {
         ue_wrap::ParamFrame f(add);
         ue_wrap::FTransform t{};
@@ -123,10 +145,11 @@ bool BuildClawd(void* actor) {
         E::SetStaticMesh(comp, cube);
         E::SetComponentMaterial(comp, 0, material);
         if (void* mid = E::CreateDynamicMaterialInstance(comp, 0)) SetColor(mid, L"Color", b.eye ? kEyes : kTerracotta);
+        cubes.push_back(comp);
         ++built;
     }
     if (built == 0) return false;
-    if (void* mesh = E::GetStaticMeshComponent(actor)) E::SetComponentVisible(mesh, false, /*propagate=*/false);
+    HideAllBut(actor, cubes);
     return true;
 }
 
