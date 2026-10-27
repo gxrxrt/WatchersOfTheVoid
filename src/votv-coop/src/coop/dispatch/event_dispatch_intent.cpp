@@ -26,6 +26,7 @@
 #include "coop/interactables/keypad_verbs.h"  // CLIENT->HOST digit, submit, cancel, keycard, reset
 #include "coop/interactables/laptop_tab.h"  // CLIENT->HOST the PC user's tab
 #include "coop/interactables/drone_call_intent.h"  // CLIENT->HOST press of the drone console
+#include "coop/interactables/interact_forward.h"    // the generic interaction lane, both directions
 #include "coop/interactables/eraser_press_intent.h"  // CLIENT->HOST press of the drive eraser; HOST->CLIENT its show
 #include "coop/creatures/kerfus_intent.h"  // CLIENT->HOST a Kerfus verb (on/off, fix the servers, pat)
 #include "coop/interactables/desk_ping_sync.h"    // a ping's verdict on the main desk, and its answers
@@ -607,6 +608,20 @@ bool HandleIntentEvent(net::Session& session,
         UE_LOGI("[DRONE-CALL] RECEIVED slot=%d", msg.senderPeerSlot);
         coop::drone_call_intent::OnDroneFlyIntent(session, p,
                                                   static_cast<uint8_t>(msg.senderPeerSlot));
+        break;
+    }
+    case net::ReliableKind::InteractForward: {
+        // Both directions: a client's press to the host, the host's run or relay to a client. The
+        // validation, the reach and the policy live in the module; the format lives here.
+        if (msg.senderPeerSlot < 0 || msg.senderPeerSlot >= net::kMaxPeers ||
+            msg.payloadLen < sizeof(net::InteractForwardPayload)) {
+            UE_LOGW("event_feed: InteractForward malformed (slot=%d len=%zu) -- dropping", msg.senderPeerSlot,
+                    static_cast<size_t>(msg.payloadLen));
+            break;
+        }
+        net::InteractForwardPayload p{};
+        std::memcpy(&p, msg.payload, sizeof(p));
+        coop::interact_forward::OnPress(session, p, static_cast<uint8_t>(msg.senderPeerSlot));
         break;
     }
     case net::ReliableKind::KerfusIntent: {

@@ -7,6 +7,7 @@
 #include "coop/interactables/door_state_verbs.h"
 #include "coop/interactables/door_verb_intent.h"
 #include "coop/interactables/drone_call_intent.h"
+#include "coop/interactables/interact_forward.h"
 #include "coop/interactables/eraser_press_intent.h"
 #include "coop/interactables/keypad_verbs.h"
 #include "coop/interactables/lightgroup_verbs.h"
@@ -20,6 +21,7 @@ namespace coop::verb_lanes {
 
 void Install(coop::net::Session& session) {
     coop::drone_call_intent::Install(&session);  // a client's press of the drone console is run by the host
+    coop::interact_forward::Install(&session);  // the generic lane: every census-listed press, replayed or run on the host
     coop::eraser_press_intent::Install(&session);  // a client's press of the drive eraser is run by the host
     coop::door_verb_intent::Install(&session);   // a client's press, hit or pry of a base door is run by the host
     coop::camera_toggle_intent::Install(&session);  // a client's use of a security camera or its laptop light button is run by the host
@@ -46,6 +48,7 @@ void Tick(coop::net::Session& session) {
 
 void OnDisconnect() {
     coop::drone_call_intent::OnDisconnect();  // its own console button stands
+    coop::interact_forward::OnDisconnect();
     coop::eraser_press_intent::OnDisconnect();  // its own eraser button stands
     coop::door_verb_intent::OnDisconnect();   // a door's own verbs run where they are used
     coop::camera_toggle_intent::OnDisconnect();  // a camera's own press runs where it is made

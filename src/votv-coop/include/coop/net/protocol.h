@@ -1092,6 +1092,10 @@ enum class ReliableKind : uint8_t {
     AtvTakeover = 250,
     AtvAnswer = 251,
     AtvSetComplete = 252,
+    // Any peer, in both directions through the host: one interaction press on a class the generic
+    // interaction lane covers (coop/interactables/interact_forward), replayed with the presser's
+    // puppet as the player. InteractForwardPayload.
+    InteractForward = 253,
 };
 
 #pragma pack(push, 1)
@@ -3787,6 +3791,32 @@ constexpr uint8_t kLeaveTimer = 2;  // the leave timer face, a toggle on the hos
 constexpr uint8_t kDropSack = 3;    // the drone's drop-sack option, performed by the host's drone
 constexpr uint8_t kMax = kDropSack;
 }  // namespace drone_verb
+// One press, as the generic interaction lane carries it (InteractForward). The target is named by its
+// class and portable identity, which both peers derive alone (coop/element/portable_identity); the
+// look-at flags are the presser's own trace results, written over the receiver's for the call only.
+namespace interact_verb {
+constexpr uint8_t kActionOptionIndex = 0;
+constexpr uint8_t kPlayerUsedOn = 1;
+constexpr uint8_t kPlayerUse = 2;
+constexpr uint8_t kMax = kPlayerUse;
+}  // namespace interact_verb
+constexpr int kInteractFlags = 10;
+struct InteractForwardPayload {
+    WireClassName className;
+    WireKey key;                 // PortableWireKey of the target
+    WireKey component;           // the lookAtComponent's name; len 0 = none
+    float hitX, hitY, hitZ;      // the presser's hit location
+    uint8_t verb;                // interact_verb
+    uint8_t action;              // actionOptionIndex's action
+    uint8_t presserSlot;         // who pressed; the host fills it on a relay
+    uint8_t flagCount;           // 0..kInteractFlags
+    uint16_t flagOffset[kInteractFlags];  // byte offsets of 1-byte look-at fields in the target
+    uint8_t flagValue[kInteractFlags];
+    uint8_t _pad[2];
+};
+static_assert(sizeof(InteractForwardPayload) == 176, "InteractForwardPayload wire size");
+static_assert(sizeof(InteractForwardPayload) <= 256 - 20 - 8, "InteractForwardPayload must fit one datagram");
+
 struct DroneFlyIntentPayload {
     uint8_t verb;        // 0 = call/send, 1 = legacy absolute preference, 2 = timer press
     uint8_t leaveAfter5min; // verb 1: desired bool (not a toggle)
