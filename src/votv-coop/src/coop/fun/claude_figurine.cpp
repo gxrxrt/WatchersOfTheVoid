@@ -128,13 +128,28 @@ bool BuildClawd(void* actor) {
     static void* smc = R::FindClass(L"StaticMeshComponent");
     void* add = R::FindDispatchFunctionCached(R::ClassOf(actor), L"AddComponentByClass");
     if (!cube || !material || !smc || !add) return false;
+    // Stand him on the plush's collision: its colliding bounds' floor, relative to the actor, plus the
+    // grid's own bottom (row 4's legs end two voxels below the grid's centre). Without it the cubes
+    // centred on the plush's pivot and he sank to the waist into whatever the plush rested on.
+    float lift = 2.f * kVoxel;
+    {
+        ue_wrap::FVector at{};
+        void* bounds = R::FindDispatchFunctionCached(R::ClassOf(actor), L"GetActorBounds");
+        ue_wrap::ParamFrame bf(bounds);
+        ue_wrap::FVector origin{}, extent{};
+        if (bounds && bf.valid() && E::TryGetActorLocation(actor, at) &&
+            bf.Set<bool>(L"bOnlyCollidingComponents", true) && ue_wrap::Call(actor, bf) &&
+            bf.GetRaw(L"Origin", &origin, sizeof(origin)) && bf.GetRaw(L"BoxExtent", &extent, sizeof(extent)) &&
+            extent.Z > 0.f && extent.Z < 200.f)
+            lift += (origin.Z - extent.Z) - at.Z;
+    }
     int built = 0;
     std::vector<void*> cubes;
     for (const Box& b : ClawdBoxes()) {
         ue_wrap::ParamFrame f(add);
         ue_wrap::FTransform t{};
         t.TY = ((b.col + b.len * 0.5f) - kCols * 0.5f) * kVoxel;
-        t.TZ = (kRows * 0.5f - (b.row + 0.5f)) * kVoxel;
+        t.TZ = (kRows * 0.5f - (b.row + 0.5f)) * kVoxel + lift;
         t.SX = kDepth / 100.f; t.SY = b.len * kVoxel / 100.f; t.SZ = kVoxel / 100.f;
         void* comp = nullptr;
         if (!f.valid() || !f.Set<void*>(L"Class", smc) || !f.Set<bool>(L"bManualAttachment", false) ||
