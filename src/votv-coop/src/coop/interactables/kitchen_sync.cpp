@@ -17,6 +17,7 @@
 #include "coop/props/remote_prop.h"
 #include "coop/session/net_pump.h"
 #include "ue_wrap/actors/prop.h"
+#include "ue_wrap/actors/swinger.h"  // TryReadOpen: the cremator door toggle
 #include "ue_wrap/core/cached_obj_ref.h"
 #include "ue_wrap/core/log.h"
 #include "ue_wrap/core/object_index.h"
@@ -481,6 +482,37 @@ sg::Verdict OnMouse(const sg::Call& c) {
 }
 }
 
+// The cremator door on a client: a toggle, not a drag. The door is a physics swinger the player grabs
+// with a physics handle and swings past a threshold, which is what calls its open(); on a client that
+// drag moved only its copy while the host's pose stream (every 50 ms) teleported it back, and the host
+// never saw a drag at all (seen in play: "it latches on, then a second later it springs back"). So a
+// client's grab of the cremator door is refused and becomes an open or a close on the host, whose
+// hinge drive swings the door and whose pose stream carries it to every peer.
+std::unordered_map<void*,uint64_t> g_toggleAt;
+sg::Verdict OnDoorGrab(const sg::Call& c) {
+    if (!Client() || c.fromOurCode || !c.object) return sg::Verdict::Run;
+    void* parent=K::DoorParent(c.object);
+    if (!parent || K::Type(parent)!=K::Kind::Cremator || !net_pump::IsInAnnouncedWorld(parent)) return sg::Verdict::Run;
+    static R::ParamOffset playerOff{L"player"};
+    const int32_t off=playerOff.Of(c.function);
+    void* who=nullptr;
+    if (c.locals && off>=0) std::memcpy(&who,c.locals+off,sizeof(who));
+    if (who!=players::Registry::Get().Local()) return sg::Verdict::Run;
+    const uint64_t now=Now();
+    uint64_t& last=g_toggleAt[parent];
+    if (now-last<500) return sg::Verdict::Cancel;  // one press, not the held key's repeats
+    last=now;
+    bool opened=false;
+    ue_wrap::swinger::TryReadOpen(c.object,opened);
+    net::KitchenIntentPayload p{};
+    Identity(parent,p.key,p.elementId); p.op=opened ? 3 : 2;
+    if (p.key.len || p.elementId) {
+        g_session.load()->SendReliable(net::ReliableKind::KitchenIntent,&p,sizeof(p));
+        UE_LOGI("kitchen: cremator door %s asked of the host (a grab here is a toggle)",opened?"close":"open");
+    }
+    return sg::Verdict::Cancel;
+}
+
 void Install(net::Session* session) {
     if(g_session.load()!=session)OnDisconnect();
     g_session.store(session);
@@ -498,6 +530,7 @@ void Install(net::Session* session) {
     sg::WatchName(L"Open",0x4B540006,&OnDoor,nullptr);
     sg::WatchName(L"Close",0x4B540007,&OnDoor,nullptr);
     sg::WatchClassName(L"prop_swinger_C",L"mouseAssign",0x4B540008,&OnMouse,nullptr);
+    sg::WatchClassName(L"prop_swinger_C",L"playerGrabbed",0x4B54000F,&OnDoorGrab,nullptr);
     sg::WatchClassName(L"prop_bbq_C",L"ReceiveTick",0x4B540009,&OnProducer,nullptr);
     sg::WatchClassName(L"prop_bbq_C",L"attemptIgnite",0x4B54000A,&OnGrillIgnite,&AfterGrillChange);
     sg::WatchClassName(L"prop_bbq_C",L"addCoal",0x4B54000B,&OnGrillCoal,&AfterGrillChange);
@@ -614,7 +647,9 @@ void OnIntent(const net::KitchenIntentPayload& p,uint8_t senderSlot) {
         if (g_intentAt[senderSlot] && now-g_intentAt[senderSlot]<150) return;
         g_intentAt[senderSlot]=now;
     } else {
-        if (!K::OwnsDoor(a) || K::DoorUser(a)==players::Registry::Get().Local()) return;
+        // A drag yields to the host's own hand; an open or close (the cremator toggle) does not: the
+        // door's player field can outlive the host's release.
+        if (!K::OwnsDoor(a) || (p.op==4 && K::DoorUser(a)==players::Registry::Get().Local())) return;
         const auto playerNo=roster_ledger::Get(senderSlot).playerNo;
         if (!playerNo) return;
         net::WireKey key{}; uint32_t eid=0; Identity(a,key,eid);
